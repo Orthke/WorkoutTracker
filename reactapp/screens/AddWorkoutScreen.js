@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useState } from 'react';
+import { Alert, Button, StyleSheet, Text, TextInput, View } from 'react-native';
 import { saveWorkout } from '../utils/storage';
 
 export default function AddWorkoutScreen() {

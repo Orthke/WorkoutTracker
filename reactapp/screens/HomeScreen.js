@@ -1,50 +1,144 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, Button, FlatList, StyleSheet } from 'react-native';
-import { useNavigation, useIsFocused } from '@react-navigation/native';
-import { getWorkouts } from '../utils/storage';
 
-export default function HomeScreen() {
-  const navigation = useNavigation();
-  const isFocused = useIsFocused();
-  const [workouts, setWorkouts] = useState([]);
+import { useEffect, useState } from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+
+export default function HomeScreen({ navigation }) {
+  const [dbWorkouts, setDbWorkouts] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Load workouts from storage when screen is focused
     const loadWorkouts = async () => {
-      const data = await getWorkouts();
-      setWorkouts(data);
+      try {
+        // Load simple sample data for now
+        const sampleWorkouts = [
+          {
+            id: 1,
+            name: "Upper Body Workout",
+            num_exercises: 6,
+            duration: 45,
+            user: "beginner",
+            order: 1,
+            major_group: "Upper Body"
+          },
+          {
+            id: 2,
+            name: "Lower Body Workout",
+            num_exercises: 5,
+            duration: 40,
+            user: "beginner",
+            order: 2,
+            major_group: "Lower Body"
+          },
+          {
+            id: 3,
+            name: "Full Body Workout",
+            num_exercises: 8,
+            duration: 60,
+            user: "intermediate",
+            order: 3,
+            major_group: "Full Body"
+          }
+        ];
+        setDbWorkouts(sampleWorkouts);
+      } catch (error) {
+        console.error('Failed to load workouts:', error);
+      } finally {
+        setLoading(false);
+      }
     };
+    
     loadWorkouts();
-  }, [isFocused]);
+  }, []);
+
+  const handleWorkoutPress = (workoutId) => {
+    navigation.navigate('WorkoutScreen', { workoutId });
+  };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Welcome to Workout Tracker</Text>
-      <Button title="Add New Workout" onPress={() => navigation.navigate('AddWorkout')} />
-      <Text style={styles.listTitle}>Tracked Workouts:</Text>
-      <FlatList
-        data={workouts}
-        keyExtractor={(item, idx) => idx.toString()}
-        ListEmptyComponent={<Text style={styles.empty}>No workouts yet.</Text>}
-        renderItem={({ item }) => (
-          <View style={styles.workoutItem}>
-            <Text style={styles.workoutName}>{item.name}</Text>
-            <Text style={styles.workoutDate}>{item.date}</Text>
-            <Text style={styles.workoutNotes}>{item.notes}</Text>
-          </View>
-        )}
-      />
-    </View>
+    <ScrollView style={styles.container}>
+      <Text style={styles.title}>Workout Tracker</Text>
+
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading workouts...</Text>
+        </View>
+      ) : (
+        <View style={styles.workoutsContainer}>
+          <Text style={styles.sectionTitle}>Available Workouts</Text>
+          {dbWorkouts.map((workout) => (
+            <TouchableOpacity 
+              key={workout.id} 
+              style={styles.workoutCard}
+              onPress={() => handleWorkoutPress(workout.id)}
+            >
+              <Text style={styles.workoutName}>{workout.name}</Text>
+              <Text style={styles.workoutDetails}>
+                {workout.num_exercises} exercises • {workout.duration} min
+              </Text>
+              <Text style={styles.workoutGroup}>{workout.major_group}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20 },
-  listTitle: { fontSize: 18, marginTop: 30, marginBottom: 10 },
-  empty: { color: '#888', fontStyle: 'italic', marginTop: 10 },
-  workoutItem: { padding: 12, borderBottomWidth: 1, borderColor: '#eee' },
-  workoutName: { fontWeight: 'bold', fontSize: 16 },
-  workoutDate: { color: '#666', fontSize: 14 },
-  workoutNotes: { color: '#333', fontSize: 14 },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#f2f7f2', 
+    padding: 16 
+  },
+  title: { 
+    fontSize: 28, 
+    fontWeight: '700', 
+    color: '#000', 
+    textAlign: 'center', 
+    marginVertical: 16 
+  },
+  loadingContainer: {
+    padding: 20,
+    alignItems: 'center'
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#666'
+  },
+  workoutsContainer: {
+    paddingBottom: 20
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#155724',
+    marginBottom: 16
+  },
+  workoutCard: {
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4
+  },
+  workoutName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+    marginBottom: 8
+  },
+  workoutDetails: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4
+  },
+  workoutGroup: {
+    fontSize: 12,
+    color: '#888',
+    fontStyle: 'italic'
+  }
 });
