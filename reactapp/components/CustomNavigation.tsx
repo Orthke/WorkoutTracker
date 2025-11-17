@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useSegments } from 'expo-router';
-import React from 'react';
+import { useRouter } from 'expo-router';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -23,23 +22,22 @@ const TAB_ITEMS: TabItem[] = [
     path: '/profile',
   },
   {
-    key: 'home',
-    label: 'Home',
-    icon: 'home',
-    path: '/',
-  },
-  {
     key: 'workout',
     label: 'Workout',
     icon: 'fitness',
-    path: '/workout-detail',
+    path: '/workout-list',
+  },
+  {
+    key: 'calendar',
+    label: 'Calendar',
+    icon: 'calendar',
+    path: '/calendar',
   },
 ];
 
 export default function CustomNavigation({ active }: CustomNavigationProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const segments = useSegments();
 
   const handleTabPress = (item: TabItem) => {
     // Don't navigate if already on the same tab
@@ -49,10 +47,6 @@ export default function CustomNavigation({ active }: CustomNavigationProps) {
   };
 
   const isActive = (itemKey: string) => {
-    // Handle different path matching
-    if (itemKey === 'home') {
-      return active === 'index' || segments[0] === '(index)' || !segments[0];
-    }
     return active === itemKey;
   };
 

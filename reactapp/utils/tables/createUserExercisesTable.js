@@ -9,6 +9,7 @@ export const CREATE_USER_EXERCISES_TABLE = `
     difficulty_per_set TEXT, -- JSON array of difficulty ratings (1-10) for each set
     reps_per_set TEXT, -- JSON array of reps for each set
     comments TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (exercise_id) REFERENCES exercises(id)
   );

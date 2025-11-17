@@ -10,6 +10,7 @@ export const createUsersTable = `
     tons_lifted REAL DEFAULT 0.0,
     longest_streak INTEGER DEFAULT 0,
     current_streak INTEGER DEFAULT 0,
+    active_workout INTEGER DEFAULT NULL,
     settings TEXT DEFAULT '{}',
     is_active INTEGER DEFAULT 1
   );

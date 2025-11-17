@@ -1,11 +1,24 @@
 import { Ionicons } from '@expo/vector-icons';
-import { default as Checkbox } from 'expo-checkbox';
-import { useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import CustomNavigation from '../../components/CustomNavigation';
-import { getWorkoutWithExercises, recordCompletedExercise } from '../../utils/database';
+import {
+  clearActiveWorkout,
+  deleteExerciseCompletion,
+  deleteWorkoutSessionExerciseCompletions,
+  getActiveWorkout,
+  getActiveWorkoutSession,
+  getAllExercises,
+  getCurrentUser,
+  getExerciseCompletionDetails,
+  getWorkoutWithExercises,
+  recordCompletedExercise,
+  recordCompletedWorkout,
+  saveActiveWorkoutSession,
+  setActiveWorkout
+} from '../../utils/database';
 
 
 interface Exercise {
@@ -20,6 +33,7 @@ interface Exercise {
   press_pull?: string;
   category?: string;
   exercise_order?: number;
+  bodyweight?: boolean;
 }
 
 interface WorkoutData {
@@ -35,28 +49,396 @@ interface WorkoutData {
 
 interface SetData {
   weight: number;
-  difficulty: 'easy' | 'medium' | 'hard';
+  difficulty: 'easy' | 'medium' | 'hard' | null;
   completed: boolean;
 }
 
+const createDefaultSet = (): SetData => ({
+  weight: 50,
+  difficulty: null,
+  completed: false,
+});
+
+const resolveSetsCount = (rawSets?: number | null) => {
+  if (typeof rawSets === 'number' && Number.isFinite(rawSets) && rawSets > 0) {
+    return rawSets;
+  }
+  return 3;
+};
+
+const buildInitialExerciseState = (rawSets?: number | null) => {
+  const count = resolveSetsCount(rawSets);
+  return {
+    sets: Array.from({ length: count }, () => createDefaultSet()),
+    notes: '',
+    completed: false,
+  };
+};
+
+const normalizeDifficulty = (value: any): SetData['difficulty'] => {
+  if (value === 'easy' || value === 'medium' || value === 'hard') {
+    return value;
+  }
+  return null;
+};
+
+const normalizeExerciseState = (
+  state: any,
+  rawSets?: number | null
+): { sets: SetData[]; notes: string; completed: boolean } => {
+  const baseState = buildInitialExerciseState(rawSets);
+  if (!state) {
+    return baseState;
+  }
+
+  const normalizedSets = Array.isArray(state.sets)
+    ? state.sets.map((set: any) => ({
+        weight: typeof set?.weight === 'number' && Number.isFinite(set.weight) ? set.weight : 50,
+        difficulty: normalizeDifficulty(set?.difficulty),
+        completed: !!set?.completed,
+      }))
+    : baseState.sets;
+
+  // Don't force the length to match base_sets - allow dynamic sets
+  // Only ensure we have at least 1 set
+  if (normalizedSets.length === 0) {
+    normalizedSets.push(createDefaultSet());
+  }
+
+  return {
+    sets: normalizedSets,
+    notes: typeof state.notes === 'string' ? state.notes : '',
+    completed: state.completed === true,
+  };
+};
+
 export default function WorkoutDetail() {
   const { id } = useLocalSearchParams();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
   const [exerciseStates, setExerciseStates] = useState<{[key: number]: {sets: SetData[], notes: string, completed?: boolean}}>({});
   const [tempNotes, setTempNotes] = useState('');
   const [workout, setWorkout] = useState<WorkoutData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string>('default');
+  const [workoutActive, setWorkoutActive] = useState(false);
+  const [workoutSessionId, setWorkoutSessionId] = useState<string>('');
+  const isRestoringSession = useRef(true);
+
+  // Generate a proper GUID for unique workout session identification
+  const generateWorkoutGUID = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
+
+  const persistWorkoutSession = (states: {[key: number]: {sets: SetData[]; notes: string; completed?: boolean}}, temps: Exercise[], force = false) => {
+    if (!workout || !currentUserId || currentUserId === 'default' || isRestoringSession.current || (!workoutActive && !force)) {
+      return;
+    }
+
+    const sessionGuid = workoutSessionId || generateWorkoutGUID();
+    if (!workoutSessionId) {
+      setWorkoutSessionId(sessionGuid);
+    }
+
+    saveActiveWorkoutSession(currentUserId, workout.id, states, temps, sessionGuid)
+      .catch((error: unknown) => console.error('Error saving workout session:', error));
+  };
+  
+  // Exit workout modal states
+  const [exitWorkoutModalVisible, setExitWorkoutModalVisible] = useState(false);
+  
+  // Complete workout modal states
+  const [completeWorkoutModalVisible, setCompleteWorkoutModalVisible] = useState(false);
+  const [workoutDuration, setWorkoutDuration] = useState('');
+  const [workoutComments, setWorkoutComments] = useState('');
+  const [completingWorkout, setCompletingWorkout] = useState(false);
+  
+  // Active workout conflict modal states
+  const [activeWorkoutConflictModalVisible, setActiveWorkoutConflictModalVisible] = useState(false);
+  const [existingActiveWorkout, setExistingActiveWorkout] = useState<WorkoutData | null>(null);
+  const [discardingActiveWorkout, setDiscardingActiveWorkout] = useState(false);
+  // Temp exercise feature state
+  const [tempExercises, setTempExercises] = useState<Exercise[]>([]);
+  const [allExercises, setAllExercises] = useState<Exercise[]>([]);
+  const [exerciseSearchModalVisible, setExerciseSearchModalVisible] = useState(false);
+  const [exerciseSearchQuery, setExerciseSearchQuery] = useState('');
+
+  // Get last weights for an exercise from previous workouts
+  const getLastWeightsForExercise = async (exerciseId: number, workoutId: number): Promise<number[]> => {
+    try {
+      // Get the most recent completion of this specific exercise
+      const completionDetails = await getExerciseCompletionDetails(currentUserId, exerciseId);
+      if (completionDetails && completionDetails.weight_per_set) {
+        console.log('Found previous weights for exercise', exerciseId, ':', completionDetails.weight_per_set);
+        return completionDetails.weight_per_set;
+      }
+    } catch (error) {
+      console.error('Error getting last weights:', error);
+    }
+    
+    // Default to 50lbs for each set if no previous data found
+    const setsCount = workout?.exercises.find(e => e.id === exerciseId)?.base_sets || 3;
+    return Array(setsCount).fill(50);
+  };
+
+  // Start workout function
+  const startWorkout = async () => {
+    if (!workout) return;
+    
+    setWorkoutActive(true);
+    
+    // Generate unique GUID for this workout session
+    const sessionGUID = generateWorkoutGUID();
+    setWorkoutSessionId(sessionGUID);
+    console.log(`Generated workout session GUID: ${sessionGUID}`);
+    
+    // Set active workout in database
+    try {
+      await setActiveWorkout(currentUserId, workout.id);
+      persistWorkoutSession(exerciseStates, tempExercises, true);
+      console.log(`Started active workout ${workout.id} with session GUID ${sessionGUID} for user ${currentUserId}`);
+    } catch (error) {
+      console.error('Error setting active workout:', error);
+    }
+  };
+
+  // Exit and discard workout
+  const exitWorkout = () => {
+    setExitWorkoutModalVisible(true);
+  };
+
+  const confirmExitWorkout = async () => {
+    // Clean up exercise completion records for this specific workout session
+    try {
+      if (workoutSessionId) {
+        await deleteWorkoutSessionExerciseCompletions(currentUserId, workoutSessionId);
+        console.log(`Cleaned up exercise completions for session ${workoutSessionId}`);
+      }
+    } catch (error) {
+      console.error('Error cleaning up exercise completions:', error);
+    }
+
+    // Clear active workout from database
+    try {
+      await clearActiveWorkout(currentUserId);
+      console.log(`Cleared active workout for user ${currentUserId}`);
+    } catch (error) {
+      console.error('Error clearing active workout:', error);
+    }
+    
+    // Reset all states using the same logic as workout completion
+    resetWorkoutState();
+    setExitWorkoutModalVisible(false);
+    
+    // Navigate back
+    router.back();
+  };
+
+  // Handle discarding existing active workout to start new one
+  const discardActiveWorkoutAndStart = async () => {
+    setDiscardingActiveWorkout(true);
+    
+    try {
+      // Clean up exercise completion records for the existing active workout
+      if (workoutSessionId) {
+        await deleteWorkoutSessionExerciseCompletions(currentUserId, workoutSessionId);
+        console.log(`Cleaned up exercise completions for existing session ${workoutSessionId}`);
+      }
+
+      // Clear the existing active workout
+      await clearActiveWorkout(currentUserId);
+      console.log(`Discarded existing active workout for user ${currentUserId}`);
+      
+      // Close the conflict modal
+      setActiveWorkoutConflictModalVisible(false);
+      setExistingActiveWorkout(null);
+      
+      // Start this workout
+      await startWorkout();
+      
+    } catch (error) {
+      console.error('Error discarding active workout:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to discard existing workout',
+        visibilityTime: 2000,
+      });
+    } finally {
+      setDiscardingActiveWorkout(false);
+    }
+  };
+
+  // Go back without starting new workout
+  const goBackFromConflict = () => {
+    setActiveWorkoutConflictModalVisible(false);
+    setExistingActiveWorkout(null);
+    router.back();
+  };
+
+  // Reset workout state after completion
+  const resetWorkoutState = () => {
+    isRestoringSession.current = true;
+    setWorkoutActive(false);
+    
+    // Clear all exercise states - reset checkboxes and data
+    const resetStates: {[key: number]: {sets: SetData[]; notes: string; completed?: boolean}} = {};
+    const allExercises = [ ...(workout?.exercises || []), ...tempExercises ];
+
+    allExercises.forEach(exercise => {
+      resetStates[exercise.id] = buildInitialExerciseState(exercise.base_sets);
+    });
+
+    setExerciseStates(resetStates);
+    
+    setTempExercises([]);
+    setCompleteWorkoutModalVisible(false);
+    setWorkoutDuration('');
+    setWorkoutComments('');
+    isRestoringSession.current = false;
+  };
+
+  useEffect(() => {
+    const loadCurrentUser = async () => {
+      try {
+        const user = await getCurrentUser();
+        if (user) {
+          setCurrentUserId((user.username || user.id || 'default').toString());
+        }
+      } catch (error) {
+        console.error('Error loading current user:', error);
+      }
+    };
+    loadCurrentUser();
+  }, []);
+  
+  // Check if this workout is already active when component loads
+  useEffect(() => {
+    const checkActiveWorkout = async () => {
+      if (!currentUserId || currentUserId === 'default' || !id) return;
+      
+      try {
+        const activeWorkoutId = await getActiveWorkout(currentUserId);
+        const currentWorkoutId = parseInt(id as string);
+        
+        if (activeWorkoutId && activeWorkoutId !== currentWorkoutId) {
+          // User has a different active workout - show conflict modal
+          try {
+            const existingWorkout = await getWorkoutWithExercises(activeWorkoutId);
+            setExistingActiveWorkout(existingWorkout);
+            setActiveWorkoutConflictModalVisible(true);
+            console.log(`Active workout conflict detected: ${activeWorkoutId} vs ${currentWorkoutId}`);
+          } catch (error) {
+            console.error('Error loading existing active workout:', error);
+            // Fallback to redirect if we can't load the workout details
+            router.replace(`/workout-detail/${activeWorkoutId}` as any);
+          }
+          return;
+        } else if (activeWorkoutId && activeWorkoutId === currentWorkoutId) {
+          // This workout is already active - set state accordingly
+          setWorkoutActive(true);
+          console.log(`Resumed active workout ${activeWorkoutId} for user ${currentUserId}`);
+        }
+      } catch (error) {
+        console.error('Error checking active workout:', error);
+      }
+    };
+    
+    checkActiveWorkout();
+  }, [currentUserId, id, router]);
+  
+  useEffect(() => {
+    const loadExercises = async () => {
+      try {
+        const user = await getCurrentUser();
+        const userId = user?.username || 'default';
+        const list = await getAllExercises(userId);
+        setAllExercises(list);
+      } catch (error) {
+        console.error('Error loading all exercises:', error);
+      }
+    };
+    loadExercises();
+  }, []);
 
   useEffect(() => {
     const loadWorkout = async () => {
       try {
         setLoading(true);
-        const workoutData = await getWorkoutWithExercises(parseInt(id as string));
+        isRestoringSession.current = true;
+
+        const workoutId = parseInt(id as string);
+        const workoutData = await getWorkoutWithExercises(workoutId);
         setWorkout(workoutData);
+
+        let initialStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean } } = {};
+        let initialTempExercises: Exercise[] = [];
+
+        if (workoutData?.exercises) {
+          const savedSession = await getActiveWorkoutSession(currentUserId, workoutId);
+
+          if (savedSession && savedSession.exerciseStates) {
+            const savedStates = savedSession.exerciseStates;
+            const savedTemps = Array.isArray(savedSession.tempExercises) ? savedSession.tempExercises : [];
+            const normalizedStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean } } = {};
+
+            const exerciseLookup = new Map<number, Exercise>();
+            workoutData.exercises.forEach((ex: Exercise) => exerciseLookup.set(ex.id, ex));
+            savedTemps.forEach((ex: Exercise) => exerciseLookup.set(ex.id, ex));
+
+            Object.entries(savedStates).forEach(([key, state]) => {
+              const exerciseId = Number(key);
+              const exerciseRef = exerciseLookup.get(exerciseId);
+              const fallbackSets = Array.isArray((state as any)?.sets) ? (state as any).sets.length : undefined;
+              normalizedStates[exerciseId] = normalizeExerciseState(state, exerciseRef?.base_sets ?? fallbackSets ?? null);
+            });
+
+            savedTemps.forEach((tempExercise: Exercise) => {
+              if (!normalizedStates[tempExercise.id]) {
+                normalizedStates[tempExercise.id] = buildInitialExerciseState(tempExercise.base_sets);
+              }
+            });
+
+            workoutData.exercises.forEach((exercise: Exercise) => {
+              if (!normalizedStates[exercise.id]) {
+                normalizedStates[exercise.id] = buildInitialExerciseState(exercise.base_sets);
+              }
+            });
+
+            initialStates = normalizedStates;
+            initialTempExercises = savedTemps;
+            setWorkoutActive(true);
+            
+            let restoredSessionGuid = savedSession.sessionGuid;
+            if (!restoredSessionGuid) {
+              restoredSessionGuid = generateWorkoutGUID();
+              console.log('Generated new session GUID for restored workout:', restoredSessionGuid);
+            } else {
+              console.log('Restored workout session GUID:', restoredSessionGuid);
+            }
+            setWorkoutSessionId(restoredSessionGuid);
+          } else {
+            const freshStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean } } = {};
+            workoutData.exercises.forEach((exercise: Exercise) => {
+              freshStates[exercise.id] = buildInitialExerciseState(exercise.base_sets);
+            });
+            initialStates = freshStates;
+            setWorkoutActive(false);
+          }
+        }
+
+        setExerciseStates(initialStates);
+        setTempExercises(initialTempExercises);
       } catch (error) {
         console.error('Error loading workout:', error);
       } finally {
+        isRestoringSession.current = false;
         setLoading(false);
       }
     };
@@ -64,90 +446,152 @@ export default function WorkoutDetail() {
     if (id) {
       loadWorkout();
     }
-  }, [id]);
+  }, [id, currentUserId]);
 
   // Initialize exercise states if not exists
   const getExerciseState = (exerciseId: number, baseSets?: number) => {
-    if (!exerciseStates[exerciseId]) {
-      // Use base_sets from database or default to 3
-      const setsCount = baseSets || 3;
-      const initialSets = Array(setsCount).fill(null).map(() => ({
-        weight: 20,
-        difficulty: 'medium' as const,
-        completed: false
-      }));
-      const initialState = { sets: initialSets, notes: '', completed: false };
-      setExerciseStates(prev => ({
-        ...prev,
-        [exerciseId]: initialState
-      }));
-      return initialState;
-    }
-    return exerciseStates[exerciseId];
+    return normalizeExerciseState(exerciseStates[exerciseId], baseSets ?? null);
   };
 
-  const handleExercisePress = (exercise: Exercise) => {
+  const handleExercisePress = async (exercise: Exercise) => {
     setSelectedExercise(exercise);
-    const state = getExerciseState(exercise.id, exercise.base_sets);
+    let state = getExerciseState(exercise.id, exercise.base_sets);
+    const existingState = exerciseStates[exercise.id];
+
+    if (!existingState || !Array.isArray(existingState.sets) || existingState.sets.length !== state.sets.length) {
+      const patchedStates = {
+        ...exerciseStates,
+        [exercise.id]: state
+      };
+      setExerciseStates(patchedStates);
+      persistWorkoutSession(patchedStates, tempExercises);
+    }
+    
+    // If this is a fresh exercise with default weights (not yet customized), prefill weights from last workout
+    const hasDefaultWeights = state.sets.every(set => set.weight === 50);
+    if (!state.completed && hasDefaultWeights && workout) {
+      try {
+        const lastWeights = await getLastWeightsForExercise(exercise.id, workout.id);
+        const updatedSets = state.sets.map((set, index) => ({
+          ...set,
+          weight: lastWeights[index] || lastWeights[lastWeights.length - 1] || 50 // Use last available weight if fewer weights than sets
+        }));
+        
+        const updatedState = { ...state, sets: updatedSets };
+        const updatedStates = {
+          ...exerciseStates,
+          [exercise.id]: updatedState
+        };
+        setExerciseStates(updatedStates);
+        persistWorkoutSession(updatedStates, tempExercises);
+        state = updatedState;
+      } catch (error) {
+        console.error('Error prefilling weights:', error);
+      }
+    }
+    
     setTempNotes(state.notes);
     setModalVisible(true);
   };
 
   const handleExerciseComplete = async (exerciseId: number) => {
-    // Toggle exercise completion in exerciseStates
-    setExerciseStates(prev => {
-      // If the exercise state doesn't exist, we need to get it properly initialized
-      let currentState = prev[exerciseId];
-      if (!currentState) {
-        // Find the exercise to get the correct number of sets
-        const exercise = workout?.exercises.find(ex => ex.id === exerciseId);
-        if (exercise) {
-          const initialSets = Array(exercise.base_sets || 3).fill(null).map(() => ({
-            weight: 20,
-            difficulty: 'medium' as const,
-            completed: false
-          }));
-          currentState = { sets: initialSets, notes: '', completed: false };
-        } else {
-          currentState = { sets: [], notes: '', completed: false };
+    const exerciseRef = [...(workout?.exercises || []), ...tempExercises].find(ex => ex.id === exerciseId);
+    if (!exerciseRef) {
+      Toast.show({
+        type: 'error',
+        text1: 'Exercise Missing',
+        text2: 'Unable to find this exercise in the workout.',
+        visibilityTime: 2000,
+      });
+      return;
+    }
+
+    const previousStates = exerciseStates;
+    const baseState = normalizeExerciseState(previousStates[exerciseId], exerciseRef.base_sets ?? null);
+    const newCompleted = !baseState.completed;
+    const updatedState = {
+      ...baseState,
+      completed: newCompleted
+    };
+    const updatedStates = {
+      ...previousStates,
+      [exerciseId]: updatedState
+    };
+
+    setExerciseStates(updatedStates);
+    persistWorkoutSession(updatedStates, tempExercises);
+
+    try {
+      if (newCompleted) {
+        const setsForSave = updatedState.sets.length > 0
+          ? updatedState.sets
+          : buildInitialExerciseState(exerciseRef.base_sets).sets;
+        await recordExerciseCompletion(exerciseId, { ...updatedState, sets: setsForSave });
+      } else {
+        const result = await deleteExerciseCompletion(currentUserId, exerciseId);
+        if (result.success) {
+          Toast.show({
+            type: 'info',
+            text1: 'Exercise Unchecked',
+            text2: `${exerciseRef.name} removed from completed exercises`,
+            visibilityTime: 2000,
+          });
         }
       }
-      
-      const newCompleted = !currentState.completed;
-      
-      // If exercise is being marked as completed, record it in the database
-      if (newCompleted && currentState.sets.length > 0) {
-        recordExerciseCompletion(exerciseId, currentState);
-      }
-      
-      return {
-        ...prev,
-        [exerciseId]: {
-          ...currentState,
-          completed: newCompleted
-        }
+    } catch (error) {
+      console.error('Error updating exercise completion:', error);
+      const revertedStates = {
+        ...previousStates,
+        [exerciseId]: baseState
       };
-    });
+      setExerciseStates(revertedStates);
+      persistWorkoutSession(revertedStates, tempExercises);
+
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to update exercise completion',
+        visibilityTime: 2000,
+      });
+    }
   };
 
   const recordExerciseCompletion = async (exerciseId: number, exerciseState: any) => {
     try {
-      const exercise = workout?.exercises.find(ex => ex.id === exerciseId);
+      // Look for exercise in both workout exercises and temp exercises
+      const exercise = [...(workout?.exercises || []), ...tempExercises].find(ex => ex.id === exerciseId);
       if (!exercise) return;
 
+      console.log('Recording exercise completion:', {
+        exerciseId,
+        exerciseName: exercise.name,
+        exerciseState
+      });
+
+      const activeSets = Array.isArray(exerciseState.sets) && exerciseState.sets.length > 0
+        ? exerciseState.sets
+        : buildInitialExerciseState(exercise.base_sets).sets;
+
       // Extract data from exercise state
-      const setsCompleted = exerciseState.sets.length;
-      const weightPerSet = exerciseState.sets.map((set: SetData) => set.weight);
-      const difficultyPerSet = exerciseState.sets.map((set: SetData) => {
+      const setsCompleted = activeSets.length;
+      const weightPerSet = activeSets.map((set: SetData) => set.weight);
+      const difficultyPerSet = activeSets.map((set: SetData) => {
         // Convert difficulty to numeric scale (1-10)
         switch (set.difficulty) {
           case 'easy': return 3;
           case 'medium': return 6;
           case 'hard': return 9;
-          default: return 6;
+          default: return null; // Return null when no difficulty is set
         }
       });
-      const repsPerSet = exerciseState.sets.map(() => exercise.base_reps || 10); // Use base reps from exercise
+      const repsPerSet = activeSets.map(() => exercise.base_reps || 10); // Use base reps from exercise
+
+      let sessionGuid = workoutSessionId;
+      if (!sessionGuid) {
+        sessionGuid = generateWorkoutGUID();
+        setWorkoutSessionId(sessionGuid);
+        console.log('Generated fallback session GUID for exercise completion:', sessionGuid);
+      }
 
       const exerciseData = {
         setsCompleted,
@@ -155,11 +599,16 @@ export default function WorkoutDetail() {
         difficultyPerSet,
         repsPerSet,
         comments: exerciseState.notes || '',
-        workoutSessionId: null // Could be enhanced to track workout sessions
+        workoutSessionId: sessionGuid
       };
 
-      const result = await recordCompletedExercise('default', exerciseId, exerciseData);
+      console.log('Exercise data to save:', exerciseData);
+      console.log('Current workout session ID:', sessionGuid);
+
+      const result = await recordCompletedExercise(currentUserId, exerciseId, exerciseData);
       
+      console.log('Save result:', result);
+
       if (result.success) {
         Toast.show({
           type: 'success',
@@ -191,11 +640,13 @@ export default function WorkoutDetail() {
     const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);
     const newSets = [...state.sets];
     newSets[setIndex] = { ...newSets[setIndex], weight };
-    
-    setExerciseStates(prev => ({
-      ...prev,
-      [selectedExercise.id]: { ...state, sets: newSets }
-    }));
+    const updatedState = { ...state, sets: newSets };
+    const updatedStates = {
+      ...exerciseStates,
+      [selectedExercise.id]: updatedState
+    };
+    setExerciseStates(updatedStates);
+    persistWorkoutSession(updatedStates, tempExercises);
   };
 
   const updateSetDifficulty = (setIndex: number, difficulty: 'easy' | 'medium' | 'hard') => {
@@ -203,21 +654,70 @@ export default function WorkoutDetail() {
     const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);
     const newSets = [...state.sets];
     newSets[setIndex] = { ...newSets[setIndex], difficulty };
+    const updatedState = { ...state, sets: newSets };
+    const updatedStates = {
+      ...exerciseStates,
+      [selectedExercise.id]: updatedState
+    };
+    setExerciseStates(updatedStates);
+    persistWorkoutSession(updatedStates, tempExercises);
+  };
+
+  const addSet = () => {
+    if (!selectedExercise) return;
+    const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);
+    const newSets = [...state.sets, createDefaultSet()];
+    const updatedState = { ...state, sets: newSets };
+    const updatedStates = {
+      ...exerciseStates,
+      [selectedExercise.id]: updatedState
+    };
+    setExerciseStates(updatedStates);
+    persistWorkoutSession(updatedStates, tempExercises);
+  };
+
+  const removeSet = (setIndex: number) => {
+    if (!selectedExercise) return;
+    const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);
+    if (state.sets.length <= 1) return; // Don't allow removing all sets
     
-    setExerciseStates(prev => ({
-      ...prev,
-      [selectedExercise.id]: { ...state, sets: newSets }
-    }));
+    Alert.alert(
+      'Delete Set',
+      `Are you sure you want to delete Set ${setIndex + 1}?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            const newSets = state.sets.filter((_, index) => index !== setIndex);
+            const updatedState = { ...state, sets: newSets };
+            const updatedStates = {
+              ...exerciseStates,
+              [selectedExercise.id]: updatedState
+            };
+            setExerciseStates(updatedStates);
+            persistWorkoutSession(updatedStates, tempExercises);
+          },
+        },
+      ]
+    );
   };
 
   const saveNotes = () => {
     if (!selectedExercise) return;
     const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);
     
-    setExerciseStates(prev => ({
-      ...prev,
-      [selectedExercise.id]: { ...state, notes: tempNotes }
-    }));
+    const updatedState = { ...state, notes: tempNotes };
+    const updatedStates = {
+      ...exerciseStates,
+      [selectedExercise.id]: updatedState
+    };
+    setExerciseStates(updatedStates);
+    persistWorkoutSession(updatedStates, tempExercises);
   };
 
   const getDifficultyColor = (difficulty: string) => {
@@ -229,192 +729,739 @@ export default function WorkoutDetail() {
     }
   };
 
+  const areAnyExercisesCompleted = () => {
+    const allExercises = [...(workout?.exercises || []), ...tempExercises];
+    return allExercises.some(exercise => {
+      const state = exerciseStates[exercise.id];
+      return state?.completed === true;
+    });
+  };
+
+  const areAllExercisesCompleted = () => {
+    const allExercises = [...(workout?.exercises || []), ...tempExercises];
+    return allExercises.length > 0 && allExercises.every(exercise => {
+      const state = exerciseStates[exercise.id];
+      return state?.completed === true;
+    });
+  };
+
+  const handleCompleteWorkout = () => {
+    // Check if at least one exercise is completed
+    if (!areAnyExercisesCompleted()) {
+      Alert.alert(
+        'No Exercises Completed',
+        'You need to complete at least one exercise before finishing your workout.',
+        [{ text: 'OK', style: 'default' }]
+      );
+      return;
+    }
+    
+    setCompleteWorkoutModalVisible(true);
+    setWorkoutDuration(''); // Reset duration
+    setWorkoutComments(''); // Reset comments
+  };
+
+  const submitCompleteWorkout = async () => {
+    if (!workout) return;
+    
+    if (!workoutDuration.trim()) {
+      Alert.alert('Duration Required', 'Please enter the workout duration.');
+      return;
+    }
+
+    try {
+      setCompletingWorkout(true);
+      
+      console.log('Workout Detail: Completing workout for user:', currentUserId);
+      
+      let finalSessionGuid = workoutSessionId;
+      if (!finalSessionGuid) {
+        finalSessionGuid = generateWorkoutGUID();
+        setWorkoutSessionId(finalSessionGuid);
+        console.log('Generated fallback session GUID for workout completion:', finalSessionGuid);
+      }
+
+      // Record the completed workout with session GUID
+      const result = await recordCompletedWorkout(
+        currentUserId,
+        workout.id,
+        workout.name,
+        parseInt(workoutDuration),
+        workoutComments,
+        null, // customDate
+        finalSessionGuid // Pass session GUID
+      );
+
+      if (result.success) {
+        // The workout session GUID is already unique - no need to update it
+        // Exercises are already tagged with the unique GUID from the start
+        console.log(`Workout completed with session GUID: ${finalSessionGuid}`);
+        
+        // Clear active workout from database
+        try {
+          await clearActiveWorkout(currentUserId);
+          console.log(`Cleared active workout for user ${currentUserId} after completion`);
+        } catch (error) {
+          console.error('Error clearing active workout after completion:', error);
+        }
+        
+        // Show success message
+        Toast.show({
+          type: 'success',
+          text1: 'Workout Completed! 🎉',
+          text2: `Great job completing ${workout.name}!`,
+          visibilityTime: 3000,
+        });
+        
+        // Reset workout state and navigate back
+        resetWorkoutState();
+        
+        // Navigate to workout summary with the completion record ID
+        setTimeout(() => {
+          router.replace(`/workout-summary/${result.id}`);
+        }, 100);
+        
+      } else {
+        throw new Error('Failed to record workout completion');
+      }
+    } catch (error) {
+      console.error('Error completing workout:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to complete workout. Please try again.',
+        visibilityTime: 2000,
+      });
+    } finally {
+      setCompletingWorkout(false);
+    }
+  };
+
+  const cancelCompleteWorkout = () => {
+    setCompleteWorkoutModalVisible(false);
+    setWorkoutDuration('');
+    setWorkoutComments('');
+  };
+
+  // Derived list including temp exercises
+  const displayedExercises = [ ...(workout?.exercises || []) , ...tempExercises ];
+
+  const openAddTempExerciseModal = () => {
+    setExerciseSearchQuery('');
+    setExerciseSearchModalVisible(true);
+  };
+
+  const closeAddTempExerciseModal = () => {
+    setExerciseSearchModalVisible(false);
+  };
+
+  const handleAddTempExercise = (exercise: Exercise) => {
+    // Prevent duplicates (already in workout or temp list)
+    const alreadyExists = (workout?.exercises || []).some(ex => ex.id === exercise.id) || tempExercises.some(ex => ex.id === exercise.id);
+    if (alreadyExists) {
+      Toast.show({
+        type: 'info',
+        text1: 'Already Added',
+        text2: `${exercise.name} is already in this workout`,
+        visibilityTime: 1500,
+      });
+      return;
+    }
+    
+    const updatedTempExercises = [...tempExercises, exercise];
+    setTempExercises(updatedTempExercises);
+    
+    const initialState = buildInitialExerciseState(exercise.base_sets);
+    const updatedStates = {
+      ...exerciseStates,
+      [exercise.id]: initialState
+    };
+    setExerciseStates(updatedStates);
+    persistWorkoutSession(updatedStates, updatedTempExercises);
+    
+    Toast.show({
+      type: 'success',
+      text1: 'Temp Exercise Added',
+      text2: `${exercise.name} added to workout`,
+      visibilityTime: 2000,
+    });
+  };
+
+  const handleRemoveTempExercise = (exerciseId: number) => {
+    const exerciseToRemove = tempExercises.find(ex => ex.id === exerciseId);
+    if (!exerciseToRemove) return;
+    
+    // Remove from temp exercises
+    const updatedTempExercises = tempExercises.filter(ex => ex.id !== exerciseId);
+    setTempExercises(updatedTempExercises);
+    
+    // Remove from exercise states
+    const updatedStates = { ...exerciseStates };
+    delete updatedStates[exerciseId];
+    setExerciseStates(updatedStates);
+    
+    // Update session
+    persistWorkoutSession(updatedStates, updatedTempExercises);
+    
+    // Close modal
+    setModalVisible(false);
+    
+    Toast.show({
+      type: 'info',
+      text1: 'Temp Exercise Removed',
+      text2: `${exerciseToRemove.name} removed from workout`,
+      visibilityTime: 2000,
+    });
+  };
+
+  const filteredExercises = allExercises.filter(ex => {
+    // First check if it matches the search query
+    const matchesSearch = ex.name.toLowerCase().includes(exerciseSearchQuery.toLowerCase()) ||
+                         ex.major_group.toLowerCase().includes(exerciseSearchQuery.toLowerCase());
+    
+    if (!matchesSearch) return false;
+    
+    // Then check if it's not already in the workout
+    const isInOriginalWorkout = (workout?.exercises || []).some(workoutEx => workoutEx.id === ex.id);
+    const isInTempExercises = tempExercises.some(tempEx => tempEx.id === ex.id);
+    
+    return !isInOriginalWorkout && !isInTempExercises;
+  }).slice(0, 50); // limit for performance
+
   if (loading) {
     return (
-      <View style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading workout...</Text>
         </View>
-        <CustomNavigation active="workout" />
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (!workout) {
     return (
-      <View style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }}>
         <View style={[styles.container, styles.centerContainer]}>
           <Text style={styles.errorText}>Workout not found</Text>
         </View>
-        <CustomNavigation active="workout" />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1 }}>
       <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
+        {!workoutActive && (
+          <TouchableOpacity style={styles.backArrow} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color="#155724" />
+          </TouchableOpacity>
+        )}
         <Text style={styles.headerTitle}>{workout.name}</Text>
+        {workoutActive ? (
+          <TouchableOpacity style={styles.exitButton} onPress={exitWorkout}>
+            <Ionicons name="close-circle" size={24} color="#fff" />
+            <Text style={styles.exitButtonText}>Exit</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={styles.startButton} onPress={startWorkout}>
+            <Ionicons name="play-circle" size={24} color="#fff" />
+            <Text style={styles.startButtonText}>Start</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
+      {!workoutActive ? (
+        <View style={styles.workoutPreview}>
+          <View style={styles.workoutInfo}>
+            <Text style={styles.workoutDescription}>Tap &quot;Start&quot; to begin your workout</Text>
+            <Text style={styles.workoutStats}>
+              {workout.exercises.length} exercises • {workout.duration} min estimated
+            </Text>
+          </View>
+          
+          {/* Exercises Preview */}
+          <View style={styles.exercisesPreviewSection}>
+            <Text style={styles.previewSectionTitle}>Workout Exercises</Text>
+            <ScrollView style={styles.exercisesPreviewList} showsVerticalScrollIndicator={false}>
+              {workout.exercises.map((exercise, index) => (
+                <View key={exercise.id} style={styles.exercisePreviewCard}>
+                  <View style={styles.exercisePreviewHeader}>
+                    <Text style={styles.exercisePreviewNumber}>{index + 1}</Text>
+                    <View style={styles.exercisePreviewInfo}>
+                      <Text style={styles.exercisePreviewName}>{exercise.name}</Text>
+                      <Text style={styles.exercisePreviewDetails}>
+                        {getExerciseState(exercise.id, exercise.base_sets).sets.length} sets × {exercise.base_reps || 10} reps
+                      </Text>
+                      {exercise.major_group && (
+                        <Text style={styles.exercisePreviewGroup}>{exercise.major_group}</Text>
+                      )}
+                    </View>
+                    <View style={styles.exercisePreviewDuration}>
+                      <Text style={styles.exercisePreviewDurationText}>
+                        ~{exercise.estimated_duration || 10}min
+                      </Text>
+                    </View>
+                  </View>
+                  {exercise.description && (
+                    <Text style={styles.exercisePreviewDescription} numberOfLines={2}>
+                      {exercise.description}
+                    </Text>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      ) : (
+        <>
       {/* Exercises List */}
       <ScrollView style={styles.exercisesList}>
-        {workout.exercises.map((exercise) => (
-          <View key={exercise.id} style={styles.exerciseCard}>
-            {/* Exercise Header */}
-            <View style={styles.exerciseHeader}>
-              <View style={styles.exerciseInfo}>
-                <Text style={styles.exerciseName}>{exercise.name}</Text>
-                <Text style={styles.exerciseDetails}>
-                  {exercise.base_sets || 3} sets × {exercise.base_reps || 10} reps
-                </Text>
-              </View>
-              <View style={styles.checkboxContainer}>
-                {exerciseStates[exercise.id]?.completed && (
-                  <Text style={styles.completedText}>Completed</Text>
-                )}
-                <Checkbox 
-                  value={exerciseStates[exercise.id]?.completed || false}
-                  onValueChange={() => handleExerciseComplete(exercise.id)}
-                  style={styles.checkbox}
-                  color={exerciseStates[exercise.id]?.completed ? '#155724' : undefined}
-                />
-              </View>
-            </View>
-
-            {/* Tap to Edit */}
-            <TouchableOpacity
-              style={styles.editButton}
-              onPress={() => handleExercisePress(exercise)}
+        {displayedExercises.map((exercise) => {
+          const isCompleted = exerciseStates[exercise.id]?.completed || false;
+          return (
+            <TouchableOpacity 
+              key={exercise.id} 
+              style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
+              onPress={() => handleExerciseComplete(exercise.id)}
+              activeOpacity={0.7}
             >
-              <Text style={styles.editButtonText}>Tap to set weights & track sets</Text>
-              <Ionicons name="chevron-forward" size={16} color="#666" />
+              {/* Exercise Header */}
+              <View style={styles.exerciseHeader}>
+                <View style={styles.exerciseInfo}>
+                  <Text style={[styles.exerciseName, isCompleted && styles.exerciseNameCompleted]}>{exercise.name}</Text>
+                  <Text style={[styles.exerciseDetails, isCompleted && styles.exerciseDetailsCompleted]}>
+                    {getExerciseState(exercise.id, exercise.base_sets).sets.length} sets × {exercise.base_reps || 10} reps
+                  </Text>
+                </View>
+                <View style={styles.exerciseActions}>
+                  {!isCompleted && (
+                    <Text style={styles.tapToCompleteText}>Tap to complete</Text>
+                  )}
+                  {isCompleted && (
+                    <View style={styles.completedBadge}>
+                      <Ionicons name="checkmark-circle" size={24} color="#fff" />
+                      <Text style={styles.completedBadgeText}>COMPLETED</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* Tap to Edit - Only show if not completed */}
+              {!isCompleted && (
+                <TouchableOpacity
+                  style={styles.editButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleExercisePress(exercise);
+                  }}
+                >
+                  <Text style={styles.editButtonText}>
+                    Tap to set weights & track sets
+                  </Text>
+                  <Ionicons name="chevron-forward" size={16} color="#666" />
+                </TouchableOpacity>
+              )}
             </TouchableOpacity>
-          </View>
-        ))}
+          );
+        })}
+        {/* Add Temp Exercise Button */}
+        <TouchableOpacity style={styles.addTempButton} onPress={openAddTempExerciseModal}>
+          <Ionicons name="add-circle" size={20} color="#fff" />
+          <Text style={styles.addTempButtonText}>Add Temp Exercise</Text>
+        </TouchableOpacity>
       </ScrollView>
+      
+      {/* Complete Workout Button */}
+      {!modalVisible && (
+        <View style={styles.completeWorkoutContainer}>
+          <TouchableOpacity
+            style={[
+              styles.completeWorkoutButton,
+              areAnyExercisesCompleted() ? styles.completeWorkoutButtonActive : styles.completeWorkoutButtonInactive
+            ]}
+            onPress={handleCompleteWorkout}
+          >
+          <Ionicons 
+            name="checkmark-circle" 
+            size={24} 
+            color={areAnyExercisesCompleted() ? "#fff" : "#999"} 
+          />
+          <Text style={[
+            styles.completeWorkoutButtonText,
+            areAnyExercisesCompleted() ? styles.completeWorkoutButtonTextActive : styles.completeWorkoutButtonTextInactive
+          ]}>
+            {areAllExercisesCompleted() 
+              ? 'Complete Workout' 
+              : `Complete Workout (${Object.values(exerciseStates).filter(state => state?.completed).length} done)`
+            }
+          </Text>
+        </TouchableOpacity>
+      </View>
+      )}
 
       {/* Exercise Detail Modal */}
       <Modal
         animationType="slide"
         transparent={true}
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={() => {
+          saveNotes();
+          setModalVisible(false);
+        }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            {/* Header with close button */}
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{selectedExercise?.name}</Text>
-              <TouchableOpacity 
-                style={styles.closeButton}
-                onPress={() => setModalVisible(false)}
-              >
-                <Ionicons name="close" size={20} color="#666" />
+        <View 
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <TouchableOpacity 
+            style={{flex: 1}}
+            activeOpacity={1}
+            onPress={() => {
+              setModalVisible(false);
+            }}
+          >
+            <View style={{flex: 1, justifyContent: 'flex-end'}}>
+              <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+                <Animated.View 
+                  style={[
+                    {
+                      backgroundColor: '#fff',
+                      borderTopLeftRadius: 20,
+                      borderTopRightRadius: 20,
+                      maxHeight: '95%',
+                      minHeight: '75%',
+                    }
+                  ]} 
+                >
+                  <SafeAreaView style={{flex: 1}}>
+                    {/* Header with close button */}
+                    <View style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 8,
+                      paddingHorizontal: 20,
+                    }}>
+                <Text style={styles.modalTitle}>{selectedExercise?.name}</Text>
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                }}>
+                  {/* Remove button for temp exercises only */}
+                  {selectedExercise && tempExercises.some(ex => ex.id === selectedExercise.id) && (
+                    <TouchableOpacity 
+                      style={{
+                        padding: 8,
+                        backgroundColor: '#ffe6e6',
+                        borderRadius: 8,
+                      }}
+                      onPress={() => handleRemoveTempExercise(selectedExercise.id)}
+                    >
+                      <Ionicons name="trash" size={18} color="#dc3545" />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity 
+                    style={{
+                      padding: 8,
+                      backgroundColor: '#f0f0f0',
+                      borderRadius: 8,
+                    }}
+                    onPress={() => {
+                      saveNotes();
+                      setModalVisible(false);
+                    }}
+                  >
+                    <Ionicons name="close" size={20} color="#666" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+                  <Text style={styles.modalSubtitle}>
+                    {selectedExercise?.base_sets || 3} sets × {selectedExercise?.base_reps || 10} reps
+                  </Text>
+
+                  <ScrollView 
+                    style={{flex: 1}}
+                    contentContainerStyle={{paddingHorizontal: 20, paddingBottom: 20}}
+                    showsVerticalScrollIndicator={true}
+                  >
+                    {selectedExercise && getExerciseState(selectedExercise.id, selectedExercise.base_sets).sets.map((setData, index) => (
+                        <View key={index} style={styles.setRow}>
+                          <View style={styles.setRowHeader}>
+                            <Text style={styles.setNumber}>Set {index + 1}</Text>
+                            {getExerciseState(selectedExercise.id, selectedExercise.base_sets).sets.length > 1 && (
+                              <TouchableOpacity 
+                                onPress={() => removeSet(index)}
+                                style={styles.removeSetButton}
+                                activeOpacity={0.7}
+                              >
+                                <Ionicons name="close-circle" size={20} color="#dc3545" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                          
+                          <View style={styles.setControls}>
+                            {/* Weight Picker */}
+                            <View style={styles.weightContainer}>
+                              <Text style={styles.controlLabel}>Weight</Text>
+                              <View style={styles.weightPicker}>
+                                <TouchableOpacity 
+                                  onPress={() => updateSetWeight(index, Math.max(5, setData.weight - 5))}
+                                  style={styles.weightButton}
+                                  activeOpacity={0.7}
+                                >
+                                  <Ionicons name="remove" size={16} color="#155724" />
+                                </TouchableOpacity>
+                                <Text style={styles.weightText}>{setData.weight} lbs</Text>
+                                <TouchableOpacity 
+                                  onPress={() => updateSetWeight(index, setData.weight + 5)}
+                                  style={styles.weightButton}
+                                  activeOpacity={0.7}
+                                >
+                                  <Ionicons name="add" size={16} color="#155724" />
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+
+                            {/* Difficulty Buttons */}
+                            <View style={styles.difficultyContainer}>
+                              <Text style={styles.controlLabel}>Difficulty</Text>
+                              <View style={styles.difficultyButtons}>
+                                {(['easy', 'medium', 'hard'] as const).map((diff) => (
+                                  <TouchableOpacity
+                                    key={diff}
+                                    style={[
+                                      styles.difficultyButton,
+                                      { backgroundColor: setData.difficulty === diff ? getDifficultyColor(diff) : '#f0f0f0' }
+                                    ]}
+                                    onPress={() => updateSetDifficulty(index, diff)}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Ionicons 
+                                      name={
+                                        diff === 'easy' ? 'happy-outline' :
+                                        diff === 'medium' ? 'reorder-two-outline' :
+                                        'skull-outline'
+                                      }
+                                      size={16}
+                                      color={setData.difficulty === diff ? '#fff' : '#666'}
+                                    />
+                                  </TouchableOpacity>
+                                ))}
+                              </View>
+                            </View>
+                          </View>
+                        </View>
+                      ))}
+                      
+                      {/* Add Set Button */}
+                      <TouchableOpacity 
+                        style={styles.addSetButton} 
+                        onPress={addSet}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="add-circle" size={20} color="#155724" />
+                        <Text style={styles.addSetText}>Add Set</Text>
+                      </TouchableOpacity>
+                  </ScrollView>
+                </SafeAreaView>
+                </Animated.View>
               </TouchableOpacity>
             </View>
-            <Text style={styles.modalSubtitle}>
-              {selectedExercise?.base_sets || 3} sets × {selectedExercise?.base_reps || 10} reps
+          </TouchableOpacity>
+        </View>
+      </Modal>
+      
+      {/* Complete Workout Modal */}
+      <Modal
+        visible={completeWorkoutModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={cancelCompleteWorkout}
+      >
+        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
+          <View style={styles.completeWorkoutModal}>
+            <Text style={styles.completeWorkoutTitle}>Complete Workout</Text>
+            <Text style={styles.completeWorkoutSubtitle}>
+              Great job! How was your {workout?.name} workout?
             </Text>
-
-            <ScrollView style={styles.setsContainer}>
-              {selectedExercise && getExerciseState(selectedExercise.id, selectedExercise.base_sets).sets.map((setData, index) => (
-                <View key={index} style={styles.setRow}>
-                  <Text style={styles.setNumber}>Set {index + 1}</Text>
-                  
-                  <View style={styles.setControls}>
-                    {/* Weight Picker */}
-                    <View style={styles.weightContainer}>
-                      <Text style={styles.controlLabel}>Weight</Text>
-                      <View style={styles.weightPicker}>
-                        <TouchableOpacity 
-                          onPress={() => updateSetWeight(index, Math.max(5, setData.weight - 5))}
-                          style={styles.weightButton}
-                        >
-                          <Ionicons name="remove" size={16} color="#155724" />
-                        </TouchableOpacity>
-                        <Text style={styles.weightText}>{setData.weight} lbs</Text>
-                        <TouchableOpacity 
-                          onPress={() => updateSetWeight(index, setData.weight + 5)}
-                          style={styles.weightButton}
-                        >
-                          <Ionicons name="add" size={16} color="#155724" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    {/* Difficulty Buttons */}
-                    <View style={styles.difficultyContainer}>
-                      <Text style={styles.controlLabel}>Difficulty</Text>
-                      <View style={styles.difficultyButtons}>
-                        {(['easy', 'medium', 'hard'] as const).map((diff) => (
-                          <TouchableOpacity
-                            key={diff}
-                            style={[
-                              styles.difficultyButton,
-                              { backgroundColor: setData.difficulty === diff ? getDifficultyColor(diff) : '#f0f0f0' }
-                            ]}
-                            onPress={() => updateSetDifficulty(index, diff)}
-                          >
-                            <Ionicons 
-                              name={
-                                diff === 'easy' ? 'happy-outline' :
-                                diff === 'medium' ? 'reorder-two-outline' :
-                                'skull-outline'
-                              }
-                              size={16}
-                              color={setData.difficulty === diff ? '#fff' : '#666'}
-                            />
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-
-            {/* Notes Section */}
-            <View style={styles.notesSection}>
-              <Text style={styles.notesLabel}>Notes</Text>
+            
+            <View style={styles.inputSection}>
+              <Text style={styles.inputLabel}>Duration (minutes) *</Text>
               <TextInput
-                style={styles.notesInput}
-                value={tempNotes}
-                onChangeText={setTempNotes}
-                placeholder="Add notes about this exercise..."
+                style={styles.durationInput}
+                value={workoutDuration}
+                onChangeText={setWorkoutDuration}
+                placeholder="e.g., 30"
+                keyboardType="numeric"
+                maxLength={3}
+              />
+            </View>
+            
+            <View style={styles.inputSection}>
+              <Text style={styles.inputLabel}>Comments (optional)</Text>
+              <TextInput
+                style={styles.commentsInput}
+                value={workoutComments}
+                onChangeText={setWorkoutComments}
+                placeholder="How did you feel? Any notes about the workout..."
                 multiline
+                numberOfLines={3}
                 textAlignVertical="top"
               />
             </View>
-
-            {/* Modal Buttons */}
-            <View style={styles.modalButtons}>
+            
+            <View style={[styles.completeModalButtons, { paddingBottom: Math.max(insets.bottom, 16) }]}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setModalVisible(false)}
+                onPress={cancelCompleteWorkout}
+                disabled={completingWorkout}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={() => {
-                  saveNotes();
-                  setModalVisible(false);
-                }}
+                style={[styles.modalButton, styles.finishButton, completingWorkout && styles.finishButtonDisabled]}
+                onPress={submitCompleteWorkout}
+                disabled={completingWorkout}
               >
-                <Text style={styles.saveButtonText}>Save</Text>
+                {completingWorkout ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.finishButtonText}>Finish Workout</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      {/* Add Temp Exercise Modal */}
+      <Modal
+        visible={exerciseSearchModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={closeAddTempExerciseModal}
+      >
+        <View style={[styles.modalOverlay, { justifyContent: 'flex-end' }]}>
+          <View style={styles.searchModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Temp Exercise</Text>
+              <TouchableOpacity style={styles.closeButton} onPress={closeAddTempExerciseModal}>
+                <Ionicons name="close" size={20} color="#666" />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search exercises by name or group..."
+              value={exerciseSearchQuery}
+              onChangeText={setExerciseSearchQuery}
+            />
+            <ScrollView style={styles.searchResults}>
+              {filteredExercises.map(ex => (
+                <View key={ex.id} style={styles.searchResultRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.searchResultName}>{ex.name}</Text>
+                    <Text style={styles.searchResultGroup}>{ex.major_group}</Text>
+                  </View>
+                  <TouchableOpacity style={styles.addButton} onPress={() => handleAddTempExercise(ex)}>
+                    <Ionicons name="add" size={18} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              {filteredExercises.length === 0 && (
+                <Text style={styles.emptySearchText}>No matches found</Text>
+              )}
+            </ScrollView>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={closeAddTempExerciseModal}>
+                <Text style={styles.cancelButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      </>
+      )}
+
+      {/* Exit Workout Modal */}
+      <Modal
+        visible={exitWorkoutModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setExitWorkoutModalVisible(false)}
+      >
+        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
+          <View style={styles.exitModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Exit Workout?</Text>
+            </View>
+            <Text style={styles.modalText}>
+              Are you sure you want to exit this workout? All progress will be lost.
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.cancelButton]} 
+                onPress={() => setExitWorkoutModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.exitButton]} 
+                onPress={confirmExitWorkout}
+              >
+                <Text style={styles.exitButtonText}>Exit Workout</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      
+      {/* Active Workout Conflict Modal */}
+      <Modal
+        visible={activeWorkoutConflictModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={goBackFromConflict}
+      >
+        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
+          <View style={styles.exitModalContent}>
+            <View style={styles.modalHeader}>
+              <Ionicons name="warning" size={24} color="#ff6b35" />
+              <Text style={styles.modalTitle}>Active Workout Detected</Text>
+            </View>
+            <Text style={styles.modalText}>
+              You already have an active workout &ldquo;{existingActiveWorkout?.name}&rdquo;. 
+              You can either continue with your existing workout or discard it to start this one.
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.cancelButton]} 
+                onPress={goBackFromConflict}
+              >
+                <Text style={styles.cancelButtonText}>Go Back</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.exitButton, discardingActiveWorkout && styles.finishButtonDisabled]} 
+                onPress={discardActiveWorkoutAndStart}
+                disabled={discardingActiveWorkout}
+              >
+                {discardingActiveWorkout ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.exitButtonText}>Discard & Start New</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
       </View>
-      
-      <CustomNavigation active="workout" />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -436,7 +1483,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-    paddingTop: 50
+    paddingTop: 20
+  },
+  backArrow: {
+    padding: 8,
+    marginRight: 12,
+    borderRadius: 6,
+    backgroundColor: '#f0f0f0',
   },
   headerTitle: {
     fontSize: 18,
@@ -460,6 +1513,10 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#155724',
   },
+  exerciseCardCompleted: {
+    backgroundColor: '#155724',
+    borderLeftColor: '#0d3f17',
+  },
   exerciseHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -469,29 +1526,47 @@ const styles = StyleSheet.create({
   exerciseInfo: {
     flex: 1,
   },
+  exerciseActions: {
+    alignItems: 'flex-end',
+  },
+  tapToCompleteText: {
+    fontSize: 12,
+    color: '#155724',
+    fontWeight: '500',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#e8f5e8',
+    borderRadius: 4,
+  },
   exerciseName: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#155724',
     marginBottom: 4,
   },
+  exerciseNameCompleted: {
+    color: '#fff',
+  },
   exerciseDetails: {
     fontSize: 14,
     color: '#666',
   },
-  checkboxContainer: {
+  exerciseDetailsCompleted: {
+    color: '#d4edda',
+  },
+  completedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
   },
-  completedText: {
+  completedBadgeText: {
     fontSize: 12,
-    color: '#155724',
-    fontWeight: '600',
-    marginRight: 8,
-  },
-  checkbox: {
-    marginLeft: 8,
-    transform: [{ scale: 1.5 }],
+    color: '#fff',
+    fontWeight: 'bold',
   },
   editButton: {
     flexDirection: 'row',
@@ -506,23 +1581,85 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  editButtonTextCompleted: {
+    color: '#fff',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
+    alignItems: 'center',
+    width: '100%',
   },
-  modalContent: {
+  modalKeyboardView: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    width: '100%',
+    maxHeight: '90%',
+  },
+  modalSafeArea: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
+    width: '100%',
+    maxHeight: '100%',
+    minHeight: '75%',
+    flex: 1,
+  },
+  swipeIndicator: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#ccc',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
     padding: 20,
-    height: '80%'
+    paddingBottom: 40,
+    width: '100%',
+    flex: 1,
+    minHeight: 400,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  exitModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    maxWidth: 400,
+    width: '90%',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
   },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 8,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  modalHeaderButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  removeTempButton: {
+    padding: 8,
+    borderRadius: 6,
+    backgroundColor: '#fee',
   },
   closeButton: {
     width: 36,
@@ -538,6 +1675,7 @@ const styles = StyleSheet.create({
     color: '#155724',
     textAlign: 'center',
     marginBottom: 4,
+    paddingTop: 20,
   },
   modalSubtitle: {
     fontSize: 16,
@@ -554,11 +1692,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 8,
   },
+  setRowHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   setNumber: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#155724',
-    marginBottom: 8,
+  },
+  removeSetButton: {
+    padding: 4,
   },
   setControls: {
     flexDirection: 'row',
@@ -658,6 +1804,200 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
+  completeWorkoutContainer: {
+    padding: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  completeWorkoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  completeWorkoutButtonActive: {
+    backgroundColor: '#155724',
+  },
+  completeWorkoutButtonInactive: {
+    backgroundColor: '#e0e0e0',
+  },
+  completeWorkoutButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  completeWorkoutButtonTextActive: {
+    color: '#fff',
+  },
+  completeWorkoutButtonTextInactive: {
+    color: '#999',
+  },
+  addTempButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#155724',
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 8,
+    marginBottom: 24,
+    gap: 8,
+  },
+  addTempButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  addSetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e8f5e8',
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 8,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#155724',
+    borderStyle: 'dashed',
+  },
+  addSetText: {
+    color: '#155724',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  completeWorkoutModal: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    margin: 20,
+    maxWidth: 400,
+    width: '90%',
+    maxHeight: '70%',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  completeWorkoutTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#155724',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  completeWorkoutSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  inputSection: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  durationInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 16,
+    backgroundColor: '#f9f9f9',
+  },
+  commentsInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 14,
+    backgroundColor: '#f9f9f9',
+    minHeight: 80,
+  },
+  completeModalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+  },
+  finishButton: {
+    backgroundColor: '#155724',
+    marginLeft: 8,
+  },
+  finishButtonDisabled: {
+    opacity: 0.6,
+  },
+  finishButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  searchModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
+    height: '90%',
+    width: '100%',
+    position: 'absolute',
+    bottom: 0,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    backgroundColor: '#f9f9f9',
+    marginBottom: 12,
+  },
+  searchResults: {
+    flex: 1,
+  },
+  searchResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  searchResultName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#155724',
+  },
+  searchResultGroup: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+  },
+  addButton: {
+    backgroundColor: '#155724',
+    padding: 10,
+    borderRadius: 8,
+    marginLeft: 12,
+  },
+  emptySearchText: {
+    textAlign: 'center',
+    color: '#666',
+    marginTop: 24,
+  },
   centerContainer: {
     justifyContent: 'center',
     alignItems: 'center',
@@ -671,5 +2011,139 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#d32f2f',
     fontWeight: '600',
+  },
+  // Workout state styles
+  startButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#28a745',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  startButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    marginLeft: 4,
+  },
+  exitButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#dc3545',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  exitButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    marginLeft: 4,
+  },
+  workoutInfo: {
+    padding: 20,
+    backgroundColor: '#fff',
+    margin: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  workoutDescription: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  workoutStats: {
+    fontSize: 14,
+    color: '#155724',
+    fontWeight: 'bold',
+  },
+  modalText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  // Workout Preview Styles
+  workoutPreview: {
+    flex: 1,
+  },
+  exercisesPreviewSection: {
+    flex: 1,
+    margin: 16,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+  },
+  previewSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#155724',
+    marginBottom: 12,
+  },
+  exercisesPreviewList: {
+    flex: 1,
+  },
+  exercisePreviewCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#155724',
+  },
+  exercisePreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  exercisePreviewNumber: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#fff',
+    backgroundColor: '#155724',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginRight: 12,
+    minWidth: 24,
+    textAlign: 'center',
+  },
+  exercisePreviewInfo: {
+    flex: 1,
+  },
+  exercisePreviewName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  exercisePreviewDetails: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 2,
+  },
+  exercisePreviewGroup: {
+    fontSize: 12,
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  exercisePreviewDuration: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exercisePreviewDurationText: {
+    fontSize: 12,
+    color: '#155724',
+    fontWeight: '600',
+    backgroundColor: '#e8f5e8',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  exercisePreviewDescription: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 18,
+    paddingLeft: 36,
   },
 });

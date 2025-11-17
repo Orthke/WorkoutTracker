@@ -1,15 +1,26 @@
 {
   "expo": {
-    "name": "reactapp",
+    "name": "WorkoutTracker",
     "slug": "reactapp",
     "version": "1.0.0",
+    "description": "Track your workouts, exercises, and progress with a simple, powerful fitness app.",
+    "githubUrl": "https://github.com/kjdev/workouttracker",
+    "privacy": "public",
+    "author": "KJ",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "reactapp",
+    "scheme": "workouttracker",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kjdev.workouttracker",
+      "buildNumber": "1.0.0"
     },
     "android": {
       "adaptiveIcon": {
@@ -20,7 +31,8 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.kjdev.workout"
+      "package": "com.kjdev.workouttracker",
+      "versionCode": 1
     },
     "web": {
       "output": "static",
@@ -40,7 +52,8 @@
           }
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -51,6 +64,7 @@
       "eas": {
         "projectId": "03162358-ee04-4327-ac4d-2d606b5a6179"
       }
-    }
+    },
+    "owner": "kelton_o"
   }
 }

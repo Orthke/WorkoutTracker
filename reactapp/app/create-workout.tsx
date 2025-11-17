@@ -1,31 +1,33 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import DraggableFlatList, {
-    DragEndParams,
-    RenderItemParams,
+  DragEndParams,
+  RenderItemParams,
 } from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {
-    addExercisesToWorkout,
-    addExerciseToFavorites,
-    addWorkoutToDB,
-    getAllExercises,
-    initDatabase,
-    isExerciseFavorited,
-    removeExerciseFromFavorites
+  addExercisesToWorkout,
+  addExerciseToFavorites,
+  addWorkoutToDB,
+  getAllExercises,
+  getCurrentUser,
+  initDatabase,
+  isExerciseFavorited,
+  removeExerciseFromFavorites
 } from '../utils/database';
 
 interface Exercise {
@@ -59,6 +61,7 @@ export default function CreateWorkout() {
   const [deleteExerciseModalVisible, setDeleteExerciseModalVisible] = useState(false);
   const [exerciseToDelete, setExerciseToDelete] = useState<SelectedExercise | null>(null);
   const [favoriteExercises, setFavoriteExercises] = useState<Set<number>>(new Set());
+  const [currentUserId, setCurrentUserId] = useState<string>('default');
 
   const muscleGroups = ['all', 'favorites', 'chest', 'arms', 'back', 'legs', 'shoulders', 'core', 'cardio'];
 
@@ -66,8 +69,14 @@ export default function CreateWorkout() {
     const loadExercises = async () => {
       try {
         await initDatabase();
-        // Get all exercises from database
-        const exercises = await getAllExercises();
+        
+        // Get current user
+        const user = await getCurrentUser();
+        const userId = user?.username || 'default';
+        setCurrentUserId(userId);
+        
+        // Get all exercises including user's custom exercises
+        const exercises = await getAllExercises(userId);
         setAvailableExercises(exercises);
         setFilteredExercises(exercises);
         
@@ -269,15 +278,18 @@ export default function CreateWorkout() {
     }
   };
 
-  const renderSelectedExercise = ({ item, drag }: RenderItemParams<SelectedExercise>) => {
+  const renderSelectedExercise = ({ item, drag, isActive }: RenderItemParams<SelectedExercise>) => {
     return (
-      <TouchableOpacity
-        style={styles.selectedExerciseCard}
-        onLongPress={drag}
-        delayLongPress={10}
-      >
+      <View style={[styles.selectedExerciseCard, isActive && styles.selectedExerciseCardActive]}>
         <View style={styles.selectedExerciseContent}>
-          <Ionicons name="reorder-three" size={48} color="#666" style={styles.dragHandle} />
+          <TouchableOpacity 
+            onPressIn={drag}
+            style={styles.dragHandleContainer}
+            activeOpacity={1}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="reorder-three" size={28} color="#666" style={styles.dragHandle} />
+          </TouchableOpacity>
           <View style={styles.selectedExerciseInfo}>
             <Text style={styles.selectedExerciseName}>{item.name}</Text>
             <Text style={styles.selectedExerciseDetails}>
@@ -292,7 +304,7 @@ export default function CreateWorkout() {
             <Ionicons name="close-circle" size={24} color="#e74c3c" />
           </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -330,15 +342,69 @@ export default function CreateWorkout() {
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centerContainer]}>
+      <SafeAreaView style={[styles.container, styles.centerContainer]}>
         <ActivityIndicator size="large" color="#155724" />
         <Text style={styles.loadingText}>Loading exercises...</Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
+  // Render header content for DraggableFlatList
+  const renderHeader = () => (
+    <View>
+      {/* Workout Name Input */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Workout Name</Text>
+        <TextInput
+          style={styles.nameInput}
+          value={workoutName}
+          onChangeText={setWorkoutName}
+          placeholder="Enter workout name..."
+          maxLength={50}
+        />
+      </View>
+
+      {/* Section Header */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>
+          Selected Exercises ({selectedExercises.length})
+        </Text>
+        {selectedExercises.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No exercises added yet</Text>
+            <Text style={styles.emptyStateSubtext}>Tap the button below to add exercises</Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+
+  // Render footer content for DraggableFlatList
+  const renderFooter = () => (
+    <View>
+      {selectedExercises.length > 0 && (
+        <View style={styles.workoutStats}>
+          <Text style={styles.statsText}>
+            Duration: ~{calculateWorkoutDuration()} minutes
+          </Text>
+        </View>
+      )}
+
+      {/* Add Exercises Button */}
+      <TouchableOpacity
+        style={styles.addExercisesButton}
+        onPress={() => setShowExerciseModal(true)}
+      >
+        <Ionicons name="add-circle" size={24} color="#fff" />
+        <Text style={styles.addExercisesButtonText}>Add Exercises</Text>
+      </TouchableOpacity>
+      <View style={{ height: 100 }} />
+    </View>
+  );
+
   return (
-    <GestureHandlerRootView style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      <GestureHandlerRootView style={styles.flex1}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.push('/')}>
           <Ionicons name="arrow-back" size={24} color="#155724" />
@@ -357,56 +423,20 @@ export default function CreateWorkout() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Workout Name Input */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Workout Name</Text>
-          <TextInput
-            style={styles.nameInput}
-            value={workoutName}
-            onChangeText={setWorkoutName}
-            placeholder="Enter workout name..."
-            maxLength={50}
-          />
-        </View>
-
-        {/* Selected Exercises */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>
-            Selected Exercises ({selectedExercises.length})
-          </Text>
-          {selectedExercises.length > 0 ? (
-            <View style={styles.selectedExercisesContainer}>
-              <DraggableFlatList
-                data={selectedExercises}
-                onDragEnd={onDragEnd}
-                keyExtractor={(item) => item.id.toString()}
-                renderItem={renderSelectedExercise}
-                scrollEnabled={false}
-              />
-              <View style={styles.workoutStats}>
-                <Text style={styles.statsText}>
-                  Duration: ~{calculateWorkoutDuration()} minutes
-                </Text>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No exercises added yet</Text>
-              <Text style={styles.emptyStateSubtext}>Tap the button below to add exercises</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Add Exercises Button */}
-        <TouchableOpacity
-          style={styles.addExercisesButton}
-          onPress={() => setShowExerciseModal(true)}
-        >
-          <Ionicons name="add-circle" size={24} color="#fff" />
-          <Text style={styles.addExercisesButtonText}>Add Exercises</Text>
-        </TouchableOpacity>
-      </ScrollView>
+      <DraggableFlatList
+        data={selectedExercises}
+        onDragEnd={onDragEnd}
+        keyExtractor={(item) => item.id.toString()}
+        renderItem={renderSelectedExercise}
+        ListHeaderComponent={renderHeader}
+        ListFooterComponent={renderFooter}
+        contentContainerStyle={styles.content}
+        autoscrollThreshold={80}
+        autoscrollSpeed={200}
+        activationDistance={0}
+        dragHitSlop={{ top: 0, bottom: 0, left: 0, right: 0 }}
+        showsVerticalScrollIndicator={false}
+      />
 
       {/* Exercise Selection Modal */}
       <Modal
@@ -414,7 +444,7 @@ export default function CreateWorkout() {
         animationType="slide"
         presentationStyle="pageSheet"
       >
-        <View style={styles.modalContainer}>
+        <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Add Exercises</Text>
             <TouchableOpacity onPress={() => setShowExerciseModal(false)}>
@@ -469,7 +499,7 @@ export default function CreateWorkout() {
               </View>
             )}
           </ScrollView>
-        </View>
+        </SafeAreaView>
       </Modal>
 
       {/* Delete Exercise Confirmation Modal */}
@@ -505,7 +535,8 @@ export default function CreateWorkout() {
           </View>
         </View>
       </Modal>
-    </GestureHandlerRootView>
+      </GestureHandlerRootView>
+    </SafeAreaView>
   );
 }
 
@@ -513,6 +544,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f2f7f2',
+  },
+  flex1: {
+    flex: 1,
   },
   centerContainer: {
     justifyContent: 'center',
@@ -531,7 +565,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
-    paddingTop: 50
   },
   headerTitle: {
     fontSize: 18,
@@ -554,7 +587,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     padding: 16,
   },
   section: {
@@ -589,10 +622,30 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#155724',
   },
+  selectedExerciseCardActive: {
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    transform: [{ scale: 1.02 }],
+    zIndex: 1000,
+  },
   selectedExerciseContent: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
+  },
+  dragHandleContainer: {
+    padding: 16,
+    marginRight: 8,
+    marginLeft: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+    minWidth: 44,
+    minHeight: 44,
   },
   dragHandle: {
     marginRight: 12,
@@ -673,13 +726,14 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f5f5f5',
   },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
+    padding: 20,
+    backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },
@@ -784,6 +838,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingBottom: 40, // Extra padding for safe area
   },
   deleteModal: {
     backgroundColor: '#fff',
