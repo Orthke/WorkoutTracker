@@ -352,18 +352,6 @@ export default function CreateWorkout() {
   // Render header content for DraggableFlatList
   const renderHeader = () => (
     <View>
-      {/* Workout Name Input */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Workout Name</Text>
-        <TextInput
-          style={styles.nameInput}
-          value={workoutName}
-          onChangeText={setWorkoutName}
-          placeholder="Enter workout name..."
-          maxLength={50}
-        />
-      </View>
-
       {/* Section Header */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>
@@ -423,6 +411,20 @@ export default function CreateWorkout() {
         </TouchableOpacity>
       </View>
 
+      {/* Workout Name Input - moved outside renderHeader to prevent keyboard dismissal */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Workout Name</Text>
+        <TextInput
+          style={styles.nameInput}
+          value={workoutName}
+          onChangeText={setWorkoutName}
+          placeholder="Enter workout name..."
+          maxLength={50}
+          autoCorrect={false}
+          autoCapitalize="words"
+        />
+      </View>
+
       <DraggableFlatList
         data={selectedExercises}
         onDragEnd={onDragEnd}
@@ -459,6 +461,10 @@ export default function CreateWorkout() {
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder="Search exercises..."
+              autoCorrect={false}
+              autoCapitalize="none"
+              autoFocus={false}
+              blurOnSubmit={false}
             />
             
             <ScrollView horizontal style={styles.muscleGroupFilter} showsHorizontalScrollIndicator={false}>

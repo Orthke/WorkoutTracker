@@ -2,7 +2,7 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { getActiveWorkout, getCurrentUser, getWorkoutWithExercises } from '../utils/database';
 
 const INSPIRATIONAL_QUOTES = [
@@ -30,7 +30,6 @@ const INSPIRATIONAL_QUOTES = [
 
 export default function Index() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [userName, setUserName] = useState<string>('');
   const [activeWorkoutId, setActiveWorkoutId] = useState<number | null>(null);
   const [activeWorkout, setActiveWorkout] = useState<any>(null);
@@ -85,7 +84,7 @@ export default function Index() {
   };
 
   return (
-    <View style={[{ flex: 1, paddingTop: insets.top }]}>
+    <SafeAreaView style={{ flex: 1 }}>
       <View style={styles.container}>
         <View style={styles.welcomeSection}>
           <Ionicons name="fitness-outline" size={80} color="#155724" />
@@ -139,7 +138,7 @@ export default function Index() {
           </View>
         </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 

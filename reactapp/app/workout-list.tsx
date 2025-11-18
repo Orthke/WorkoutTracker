@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import CustomNavigation from '../components/CustomNavigation';
 import {
@@ -24,7 +24,6 @@ interface Workout {
 
 export default function WorkoutList() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
@@ -139,18 +138,18 @@ export default function WorkoutList() {
 
   if (loading) {
     return (
-      <View style={[{ flex: 1, paddingTop: insets.top }]}>
+      <SafeAreaView style={{ flex: 1 }}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading workouts...</Text>
         </View>
         <CustomNavigation active="workout" />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={[{ flex: 1, paddingTop: insets.top }]}>
+    <SafeAreaView style={{ flex: 1 }}>
       <ScrollView style={styles.container}>
         <View style={styles.header}>
           <View style={styles.placeholder} />
@@ -272,7 +271,7 @@ export default function WorkoutList() {
       </ScrollView>
       
       <CustomNavigation active="workout" />
-    </View>
+    </SafeAreaView>
   );
 }
 

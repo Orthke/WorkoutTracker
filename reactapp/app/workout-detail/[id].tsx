@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {
@@ -85,7 +85,7 @@ const normalizeDifficulty = (value: any): SetData['difficulty'] => {
 const normalizeExerciseState = (
   state: any,
   rawSets?: number | null
-): { sets: SetData[]; notes: string; completed: boolean } => {
+): { sets: SetData[]; notes: string; completed: boolean; hidden?: boolean } => {
   const baseState = buildInitialExerciseState(rawSets);
   if (!state) {
     return baseState;
@@ -109,6 +109,7 @@ const normalizeExerciseState = (
     sets: normalizedSets,
     notes: typeof state.notes === 'string' ? state.notes : '',
     completed: state.completed === true,
+    hidden: state.hidden === true,
   };
 };
 
@@ -118,8 +119,8 @@ export default function WorkoutDetail() {
   const insets = useSafeAreaInsets();
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
-  const [exerciseStates, setExerciseStates] = useState<{[key: number]: {sets: SetData[], notes: string, completed?: boolean}}>({});
-  const [tempNotes, setTempNotes] = useState('');
+  const [exerciseStates, setExerciseStates] = useState<{[key: number]: {sets: SetData[], notes: string, completed?: boolean, hidden?: boolean}}>({});
+  // const [tempNotes, setTempNotes] = useState('');
   const [workout, setWorkout] = useState<WorkoutData | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string>('default');
@@ -136,7 +137,7 @@ export default function WorkoutDetail() {
     });
   };
 
-  const persistWorkoutSession = (states: {[key: number]: {sets: SetData[]; notes: string; completed?: boolean}}, temps: Exercise[], force = false) => {
+  const persistWorkoutSession = (states: {[key: number]: {sets: SetData[]; notes: string; completed?: boolean; hidden?: boolean}}, temps: Exercise[], force = false) => {
     if (!workout || !currentUserId || currentUserId === 'default' || isRestoringSession.current || (!workoutActive && !force)) {
       return;
     }
@@ -146,6 +147,7 @@ export default function WorkoutDetail() {
       setWorkoutSessionId(sessionGuid);
     }
 
+    // @ts-ignore - Fix typing issue with database function
     saveActiveWorkoutSession(currentUserId, workout.id, states, temps, sessionGuid)
       .catch((error: unknown) => console.error('Error saving workout session:', error));
   };
@@ -288,7 +290,7 @@ export default function WorkoutDetail() {
     setWorkoutActive(false);
     
     // Clear all exercise states - reset checkboxes and data
-    const resetStates: {[key: number]: {sets: SetData[]; notes: string; completed?: boolean}} = {};
+    const resetStates: {[key: number]: {sets: SetData[]; notes: string; completed?: boolean; hidden?: boolean}} = {};
     const allExercises = [ ...(workout?.exercises || []), ...tempExercises ];
 
     allExercises.forEach(exercise => {
@@ -377,7 +379,7 @@ export default function WorkoutDetail() {
         const workoutData = await getWorkoutWithExercises(workoutId);
         setWorkout(workoutData);
 
-        let initialStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean } } = {};
+        let initialStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean; hidden?: boolean } } = {};
         let initialTempExercises: Exercise[] = [];
 
         if (workoutData?.exercises) {
@@ -386,7 +388,7 @@ export default function WorkoutDetail() {
           if (savedSession && savedSession.exerciseStates) {
             const savedStates = savedSession.exerciseStates;
             const savedTemps = Array.isArray(savedSession.tempExercises) ? savedSession.tempExercises : [];
-            const normalizedStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean } } = {};
+            const normalizedStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean; hidden?: boolean } } = {};
 
             const exerciseLookup = new Map<number, Exercise>();
             workoutData.exercises.forEach((ex: Exercise) => exerciseLookup.set(ex.id, ex));
@@ -424,7 +426,7 @@ export default function WorkoutDetail() {
             }
             setWorkoutSessionId(restoredSessionGuid);
           } else {
-            const freshStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean } } = {};
+            const freshStates: { [key: number]: { sets: SetData[]; notes: string; completed?: boolean; hidden?: boolean } } = {};
             workoutData.exercises.forEach((exercise: Exercise) => {
               freshStates[exercise.id] = buildInitialExerciseState(exercise.base_sets);
             });
@@ -490,7 +492,6 @@ export default function WorkoutDetail() {
       }
     }
     
-    setTempNotes(state.notes);
     setModalVisible(true);
   };
 
@@ -707,18 +708,7 @@ export default function WorkoutDetail() {
     );
   };
 
-  const saveNotes = () => {
-    if (!selectedExercise) return;
-    const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);
-    
-    const updatedState = { ...state, notes: tempNotes };
-    const updatedStates = {
-      ...exerciseStates,
-      [selectedExercise.id]: updatedState
-    };
-    setExerciseStates(updatedStates);
-    persistWorkoutSession(updatedStates, tempExercises);
-  };
+  // const saveNotes = () => {\n  //   if (!selectedExercise) return;\n  //   const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);\n  //   \n  //   const updatedState = { ...state, notes: tempNotes };\n  //   const updatedStates = {\n  //     ...exerciseStates,\n  //     [selectedExercise.id]: updatedState\n  //   };\n  //   setExerciseStates(updatedStates);\n  //   persistWorkoutSession(updatedStates, tempExercises);\n  // };
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -843,8 +833,11 @@ export default function WorkoutDetail() {
     setWorkoutComments('');
   };
 
-  // Derived list including temp exercises
-  const displayedExercises = [ ...(workout?.exercises || []) , ...tempExercises ];
+  // Derived list including temp exercises, excluding hidden exercises
+  const displayedExercises = [ ...(workout?.exercises || []).filter(ex => {
+    const state = exerciseStates[ex.id];
+    return !state?.hidden;
+  }) , ...tempExercises ];
 
   const openAddTempExerciseModal = () => {
     setExerciseSearchQuery('');
@@ -1108,89 +1101,49 @@ export default function WorkoutDetail() {
         transparent={true}
         visible={modalVisible}
         onRequestClose={() => {
-          saveNotes();
           setModalVisible(false);
         }}
       >
-        <View 
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            justifyContent: 'flex-end',
-          }}
-        >
+        <View style={styles.modalOverlay}>
           <TouchableOpacity 
             style={{flex: 1}}
             activeOpacity={1}
-            onPress={() => {
-              setModalVisible(false);
-            }}
-          >
-            <View style={{flex: 1, justifyContent: 'flex-end'}}>
-              <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()}>
-                <Animated.View 
-                  style={[
-                    {
-                      backgroundColor: '#fff',
-                      borderTopLeftRadius: 20,
-                      borderTopRightRadius: 20,
-                      maxHeight: '95%',
-                      minHeight: '75%',
-                    }
-                  ]} 
-                >
-                  <SafeAreaView style={{flex: 1}}>
-                    {/* Header with close button */}
-                    <View style={{
-                      flexDirection: 'row',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: 8,
-                      paddingHorizontal: 20,
-                    }}>
+            onPress={() => setModalVisible(false)}
+          />
+          <View style={styles.modalContent}>
+            <SafeAreaView style={{flex: 1}}>
+              {/* Header with close button */}
+              <View style={styles.modalHeaderContainer}>
                 <Text style={styles.modalTitle}>{selectedExercise?.name}</Text>
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                }}>
+                <View style={styles.modalHeaderButtons}>
                   {/* Remove button for temp exercises only */}
                   {selectedExercise && tempExercises.some(ex => ex.id === selectedExercise.id) && (
                     <TouchableOpacity 
-                      style={{
-                        padding: 8,
-                        backgroundColor: '#ffe6e6',
-                        borderRadius: 8,
-                      }}
+                      style={styles.headerActionButton}
                       onPress={() => handleRemoveTempExercise(selectedExercise.id)}
                     >
                       <Ionicons name="trash" size={18} color="#dc3545" />
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity 
-                    style={{
-                      padding: 8,
-                      backgroundColor: '#f0f0f0',
-                      borderRadius: 8,
-                    }}
-                    onPress={() => {
-                      saveNotes();
-                      setModalVisible(false);
-                    }}
+                    style={styles.closeButton}
+                    onPress={() => setModalVisible(false)}
                   >
                     <Ionicons name="close" size={20} color="#666" />
                   </TouchableOpacity>
                 </View>
               </View>
-                  <Text style={styles.modalSubtitle}>
-                    {selectedExercise?.base_sets || 3} sets × {selectedExercise?.base_reps || 10} reps
-                  </Text>
+              
+              <Text style={styles.modalSubtitle}>
+                {selectedExercise?.base_sets || 3} sets × {selectedExercise?.base_reps || 10} reps
+              </Text>
 
-                  <ScrollView 
-                    style={{flex: 1}}
-                    contentContainerStyle={{paddingHorizontal: 20, paddingBottom: 20}}
-                    showsVerticalScrollIndicator={true}
-                  >
+              <ScrollView 
+                style={{flex: 1}}
+                contentContainerStyle={{paddingHorizontal: 20, paddingBottom: 20}}
+                showsVerticalScrollIndicator={true}
+                bounces={false}
+              >
                     {selectedExercise && getExerciseState(selectedExercise.id, selectedExercise.base_sets).sets.map((setData, index) => (
                         <View key={index} style={styles.setRow}>
                           <View style={styles.setRowHeader}>
@@ -1269,12 +1222,79 @@ export default function WorkoutDetail() {
                         <Ionicons name="add-circle" size={20} color="#155724" />
                         <Text style={styles.addSetText}>Add Set</Text>
                       </TouchableOpacity>
-                  </ScrollView>
-                </SafeAreaView>
-                </Animated.View>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
+
+                      {/* Remove Exercise Button */}
+                      <TouchableOpacity 
+                        style={styles.removeExerciseButton} 
+                        onPress={() => {
+                          if (selectedExercise) {
+                            if (tempExercises.some(ex => ex.id === selectedExercise.id)) {
+                              // This is a temp exercise - remove it permanently
+                              handleRemoveTempExercise(selectedExercise.id);
+                            } else {
+                              // This is a regular workout exercise - add it to a "hidden" list for this session
+                              const exerciseToRemove = selectedExercise;
+                              
+                              // Create a new temp list that excludes this exercise (acts as a hidden list)
+                              // We'll track removed exercises by setting their state to "hidden"
+                              const updatedStates = {
+                                ...exerciseStates,
+                                [exerciseToRemove.id]: {
+                                  ...getExerciseState(exerciseToRemove.id, exerciseToRemove.base_sets),
+                                  hidden: true
+                                }
+                              };
+                              
+                              setExerciseStates(updatedStates);
+                              persistWorkoutSession(updatedStates, tempExercises);
+                              
+                              // Close modal
+                              setModalVisible(false);
+                              
+                              Toast.show({
+                                type: 'info',
+                                text1: 'Exercise Hidden',
+                                text2: `${exerciseToRemove.name} hidden for this workout session`,
+                                visibilityTime: 2000,
+                              });
+                            }
+                          }
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="remove-circle" size={20} color="#dc3545" />
+                        <Text style={styles.removeExerciseText}>Remove Exercise</Text>
+                      </TouchableOpacity>
+
+                      {/* Mark Complete Button */}
+                      <TouchableOpacity 
+                        style={[
+                          styles.markCompleteButton, 
+                          selectedExercise && getExerciseState(selectedExercise.id, selectedExercise.base_sets).completed && styles.markCompleteButtonCompleted
+                        ]} 
+                        onPress={() => {
+                          if (selectedExercise) {
+                            handleExerciseComplete(selectedExercise.id);
+                            setModalVisible(false);
+                          }
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons 
+                          name={selectedExercise && getExerciseState(selectedExercise.id, selectedExercise.base_sets).completed ? "checkmark-circle" : "checkmark-circle-outline"} 
+                          size={20} 
+                          color={selectedExercise && getExerciseState(selectedExercise.id, selectedExercise.base_sets).completed ? "#fff" : "#155724"} 
+                        />
+                        <Text style={[
+                          styles.markCompleteText,
+                          selectedExercise && getExerciseState(selectedExercise.id, selectedExercise.base_sets).completed && styles.markCompleteTextCompleted
+                        ]}>
+                          {selectedExercise && getExerciseState(selectedExercise.id, selectedExercise.base_sets).completed ? 'Mark Incomplete' : 'Mark Complete'}
+                        </Text>
+                      </TouchableOpacity>
+              </ScrollView>
+            </SafeAreaView>
+          </View>
         </View>
       </Modal>
       
@@ -1395,10 +1415,18 @@ export default function WorkoutDetail() {
         animationType="fade"
         onRequestClose={() => setExitWorkoutModalVisible(false)}
       >
-        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
-          <View style={styles.exitModalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Exit Workout?</Text>
+        <TouchableOpacity 
+          style={[styles.modalOverlay, { justifyContent: 'center' }]}
+          activeOpacity={1}
+          onPress={() => setExitWorkoutModalVisible(false)}
+        >
+          <TouchableOpacity 
+            style={styles.exitModalContent}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.exitModalHeader}>
+              <Text style={styles.exitModalTitle}>Exit Workout?</Text>
             </View>
             <Text style={styles.modalText}>
               Are you sure you want to exit this workout? All progress will be lost.
@@ -1417,8 +1445,8 @@ export default function WorkoutDetail() {
                 <Text style={styles.exitButtonText}>Exit Workout</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
       
       {/* Active Workout Conflict Modal */}
@@ -1428,11 +1456,19 @@ export default function WorkoutDetail() {
         animationType="fade"
         onRequestClose={goBackFromConflict}
       >
-        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
-          <View style={styles.exitModalContent}>
-            <View style={styles.modalHeader}>
+        <TouchableOpacity 
+          style={[styles.modalOverlay, { justifyContent: 'center' }]}
+          activeOpacity={1}
+          onPress={goBackFromConflict}
+        >
+          <TouchableOpacity 
+            style={styles.exitModalContent}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.exitModalHeader}>
               <Ionicons name="warning" size={24} color="#ff6b35" />
-              <Text style={styles.modalTitle}>Active Workout Detected</Text>
+              <Text style={styles.exitModalTitle}>Active Workout Detected</Text>
             </View>
             <Text style={styles.modalText}>
               You already have an active workout &ldquo;{existingActiveWorkout?.name}&rdquo;. 
@@ -1457,8 +1493,8 @@ export default function WorkoutDetail() {
                 )}
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
       </View>
     </SafeAreaView>
@@ -1618,12 +1654,11 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 20,
-    paddingBottom: 40,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    minHeight: '70%',
     width: '100%',
-    flex: 1,
-    minHeight: 400,
     elevation: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -1651,23 +1686,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
-  modalHeaderButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
   removeTempButton: {
     padding: 8,
     borderRadius: 6,
     backgroundColor: '#fee',
   },
   closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    padding: 8,
     backgroundColor: '#f0f0f0',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: 8,
   },
   modalTitle: {
     fontSize: 24,
@@ -1872,6 +1899,81 @@ const styles = StyleSheet.create({
     color: '#155724',
     fontWeight: '600',
     fontSize: 14,
+  },
+  removeExerciseButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffe6e6',
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#dc3545',
+    borderStyle: 'dashed',
+  },
+  removeExerciseText: {
+    color: '#dc3545',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  markCompleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e8f5e8',
+    paddingVertical: 16,
+    borderRadius: 12,
+    marginTop: 16,
+    gap: 8,
+    borderWidth: 2,
+    borderColor: '#155724',
+    shadowColor: '#155724',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  markCompleteButtonCompleted: {
+    backgroundColor: '#155724',
+    borderColor: '#0d3f17',
+  },
+  markCompleteText: {
+    color: '#155724',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  markCompleteTextCompleted: {
+    color: '#fff',
+  },
+  modalHeaderContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
+  modalHeaderButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerActionButton: {
+    padding: 8,
+    backgroundColor: '#ffe6e6',
+    borderRadius: 8,
+  },
+  exitModalHeader: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  exitModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#155724',
+    textAlign: 'center',
   },
   completeWorkoutModal: {
     backgroundColor: '#fff',

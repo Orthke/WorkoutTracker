@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import CustomNavigation from '../components/CustomNavigation';
 import {
@@ -59,7 +59,6 @@ interface UserWorkout {
 
 export default function DebugScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [userExercises, setUserExercises] = useState<UserExercise[]>([]);
   const [userWorkouts, setUserWorkouts] = useState<UserWorkout[]>([]);
@@ -209,18 +208,18 @@ export default function DebugScreen() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, paddingTop: insets.top }}>
+      <SafeAreaView style={{ flex: 1 }}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading debug data...</Text>
         </View>
         <CustomNavigation active="debug" />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={{ flex: 1, paddingTop: insets.top }}>
+    <SafeAreaView style={{ flex: 1 }}>
       <ScrollView style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
@@ -480,7 +479,7 @@ export default function DebugScreen() {
       </ScrollView>
 
       <CustomNavigation active="debug" />
-    </View>
+    </SafeAreaView>
   );
 }
 

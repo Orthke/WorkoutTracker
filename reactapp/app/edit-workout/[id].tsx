@@ -435,18 +435,6 @@ export default function EditWorkout() {
   // Render header content for DraggableFlatList
   const renderHeader = () => (
     <View>
-      {/* Workout Name Input */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Workout Name</Text>
-        <TextInput
-          style={styles.nameInput}
-          value={workoutName}
-          onChangeText={setWorkoutName}
-          placeholder="Enter workout name..."
-          maxLength={50}
-        />
-      </View>
-
       {/* Section Header */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>
@@ -486,7 +474,7 @@ export default function EditWorkout() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <GestureHandlerRootView style={styles.flex1}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.push('/workout-list')}>
@@ -504,6 +492,20 @@ export default function EditWorkout() {
             <Text style={styles.saveButtonText}>Save</Text>
           )}
         </TouchableOpacity>
+      </View>
+
+      {/* Workout Name Input - moved outside renderHeader to prevent keyboard dismissal */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Workout Name</Text>
+        <TextInput
+          style={styles.nameInput}
+          value={workoutName}
+          onChangeText={setWorkoutName}
+          placeholder="Enter workout name..."
+          maxLength={50}
+          autoCorrect={false}
+          autoCapitalize="words"
+        />
       </View>
 
       <DraggableFlatList

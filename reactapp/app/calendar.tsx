@@ -3,7 +3,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Calendar, DateData } from 'react-native-calendars';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomNavigation from '../components/CustomNavigation';
 import { deleteUserMeasurement, deleteWorkoutBySessionGuid, deleteWorkoutCompletion, getCurrentUser, getUserMeasurementHistory, getUserWorkoutHistory, getWorkoutsFromDB, recordCompletedWorkout, recordUserMeasurement } from '../utils/database';
 
@@ -27,7 +27,6 @@ interface MeasurementRecord {
 
 export default function CalendarPage() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [workoutDates, setWorkoutDates] = useState<{[date: string]: any}>({});
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutRecord[]>([]);
@@ -408,18 +407,18 @@ export default function CalendarPage() {
 
   if (loading) {
     return (
-      <View style={[{ flex: 1, paddingTop: insets.top }]}>
+      <SafeAreaView style={{ flex: 1 }}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading workout history...</Text>
         </View>
         <CustomNavigation active="calendar" />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={[{ flex: 1, paddingTop: insets.top }]}>
+    <SafeAreaView style={{ flex: 1 }}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
@@ -606,7 +605,7 @@ export default function CalendarPage() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowAddWorkoutModal(false)}
       >
-        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
+        <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Select Workout</Text>
             <TouchableOpacity onPress={() => setShowAddWorkoutModal(false)}>
@@ -643,7 +642,7 @@ export default function CalendarPage() {
         onRequestClose={cancelManualWorkout}
       >
         <View style={styles.completionModalOverlay}>
-          <View style={[styles.completionModal, { paddingTop: Math.max(insets.top, 20) }]}>
+          <View style={[styles.completionModal, { paddingTop: 20 }]}> 
             <View style={styles.completionModalHeader}>
               <Text style={styles.completionModalTitle}>Complete Workout</Text>
             </View>
@@ -796,7 +795,7 @@ export default function CalendarPage() {
         onRequestClose={() => setShowMeasurementModal(false)}
       >
         <View style={styles.completionModalOverlay}>
-          <View style={[styles.completionModal, { paddingTop: Math.max(insets.top, 20) }]}>
+          <View style={[styles.completionModal, { paddingTop: 20 }]}> 
             <View style={styles.completionModalHeader}>
               <Text style={styles.completionModalTitle}>Add Measurement</Text>
             </View>
@@ -868,7 +867,7 @@ export default function CalendarPage() {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 

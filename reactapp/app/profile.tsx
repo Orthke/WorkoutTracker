@@ -3,7 +3,7 @@ import { Picker } from '@react-native-picker/picker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import CustomNavigation from '../components/CustomNavigation';
 import {
@@ -31,8 +31,7 @@ interface User {
   is_active: number;
 }
 
-export default function ProfileScreen() {
-  const insets = useSafeAreaInsets();
+export default function Profile() {
   const router = useRouter();
   const [isClearing, setIsClearing] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -350,7 +349,7 @@ export default function ProfileScreen() {
   };
 
   return (
-    <View style={{ flex: 1, paddingTop: insets.top }}>
+    <SafeAreaView style={{ flex: 1 }}>
       <ScrollView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.avatarContainer}>
@@ -588,7 +587,7 @@ export default function ProfileScreen() {
       </ScrollView>
       
       <CustomNavigation active="profile" />
-    </View>
+    </SafeAreaView>
   );
 }
 

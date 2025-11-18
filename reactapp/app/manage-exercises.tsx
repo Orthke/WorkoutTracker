@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import CustomNavigation from '../components/CustomNavigation';
 import { deleteCustomExercise, getCurrentUser, getUserCustomExercises } from '../utils/database';
@@ -25,7 +25,6 @@ interface Exercise {
 }
 
 export default function ManageExercisesScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [customExercises, setCustomExercises] = useState<Exercise[]>([]);
   const [loading, setLoading] = useState(true);
@@ -156,15 +155,17 @@ export default function ManageExercisesScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centerContainer]}>
-        <ActivityIndicator size="large" color="#155724" />
-        <Text style={styles.loadingText}>Loading your exercises...</Text>
-      </View>
+      <SafeAreaView style={{ flex: 1 }}>
+        <View style={[styles.container, styles.centerContainer]}>
+          <ActivityIndicator size="large" color="#155724" />
+          <Text style={styles.loadingText}>Loading your exercises...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#155724" />
@@ -250,7 +251,7 @@ export default function ManageExercisesScreen() {
       </Modal>
 
       <CustomNavigation active="" />
-    </View>
+    </SafeAreaView>
   );
 }
 

@@ -14,12 +14,11 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import { createCustomExercise, getCurrentUser } from '../utils/database';
 
 export default function AddExerciseScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   
   const [formData, setFormData] = useState({
@@ -148,10 +147,11 @@ export default function AddExerciseScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <SafeAreaView style={{ flex: 1 }}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#155724" />
@@ -336,7 +336,8 @@ export default function AddExerciseScreen() {
 
         <View style={{ height: 100 }} />
       </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

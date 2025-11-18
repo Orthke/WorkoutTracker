@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { getCurrentUser, getUserExerciseHistory, getUserWorkoutHistory } from '../../utils/database';
 
 interface WorkoutRecord {
@@ -42,7 +42,6 @@ interface WorkoutSummary {
 
 export default function WorkoutSummaryPage() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string; date?: string }>();
   const [loading, setLoading] = useState(true);
   const [workoutSummary, setWorkoutSummary] = useState<WorkoutSummary | null>(null);
@@ -247,18 +246,18 @@ export default function WorkoutSummaryPage() {
 
   if (loading) {
     return (
-      <View style={[{ flex: 1, paddingTop: insets.top }]}>
+      <SafeAreaView style={{ flex: 1 }}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading workout summary...</Text>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (!workoutSummary) {
     return (
-      <View style={[{ flex: 1, paddingTop: insets.top }]}>
+      <SafeAreaView style={{ flex: 1 }}>
         <View style={[styles.container, styles.centerContainer]}>
           <Ionicons name="fitness-outline" size={64} color="#ccc" />
           <Text style={styles.emptyText}>Workout summary not found</Text>
@@ -266,12 +265,12 @@ export default function WorkoutSummaryPage() {
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={[{ flex: 1, paddingTop: insets.top }]}>
+    <SafeAreaView style={{ flex: 1 }}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
@@ -369,7 +368,7 @@ export default function WorkoutSummaryPage() {
           )}
         </ScrollView>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
