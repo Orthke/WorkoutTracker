@@ -7,13 +7,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import CustomNavigation from '../components/CustomNavigation';
 import {
-    clearAndRegenerateExercises,
-    createUser,
-    getCurrentUser,
-    getLatestUserMeasurement,
-    getUserExerciseStats,
-    recalculateUserStatsFromTables,
-    recordUserMeasurement
+  clearAndRegenerateExercises,
+  createUser,
+  exportUserDataToCSV,
+  exportWorkoutsToCSV,
+  forceRecreateSystemWorkouts,
+  getCurrentUser,
+  getLatestUserMeasurement,
+  getUserExerciseStats,
+  recalculateUserStatsFromTables,
+  recordUserMeasurement
 } from '../utils/database';
 
 interface User {
@@ -34,6 +37,9 @@ interface User {
 export default function Profile() {
   const router = useRouter();
   const [isClearing, setIsClearing] = useState(false);
+  const [isResettingDB, setIsResettingDB] = useState(false);
+  const [isExportingWorkouts, setIsExportingWorkouts] = useState(false);
+  const [isExportingUserData, setIsExportingUserData] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
@@ -154,7 +160,7 @@ export default function Profile() {
         type: 'success',
         text1: 'Stats Updated',
         text2: 'Your statistics have been recalculated',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     } catch (error) {
       console.error('Error recalculating stats:', error);
@@ -162,7 +168,7 @@ export default function Profile() {
         type: 'error',
         text1: 'Error',
         text2: 'Failed to recalculate statistics',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     } finally {
       setIsRecalculating(false);
@@ -175,7 +181,7 @@ export default function Profile() {
         type: 'error',
         text1: 'Error',
         text2: 'Please enter a username',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
       return;
     }
@@ -254,7 +260,7 @@ export default function Profile() {
         type: 'success',
         text1: 'Success! 📊',
         text2: 'Measurement saved successfully!',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     } catch (error) {
       console.error('Error saving measurement:', error);
@@ -262,7 +268,7 @@ export default function Profile() {
         type: 'error',
         text1: 'Error',
         text2: 'Failed to save measurement. Please try again.',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     }
     setSavingMeasurement(false);
@@ -307,7 +313,7 @@ export default function Profile() {
                 type: 'info',
                 text1: 'Clearing Exercises...',
                 text2: 'This may take a moment',
-                visibilityTime: 2000,
+                visibilityTime: 1000,
               });
               
               console.log('Starting exercise regeneration process...');
@@ -348,8 +354,215 @@ export default function Profile() {
     );
   };
 
+  const handleResetDatabase = async () => {
+    Alert.alert(
+      'Reset Database Schema',
+      'This will recreate all database tables with the latest schema. This fixes missing column errors. Your data will be preserved but system workouts will be regenerated. Continue?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Reset Database',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setIsResettingDB(true);
+              
+              Toast.show({
+                type: 'info',
+                text1: 'Resetting Database...',
+                text2: 'This may take a moment',
+                position: 'top',
+                topOffset: 100
+              });
+              
+              const result = await forceRecreateSystemWorkouts();
+              
+              if (result.success) {
+                Toast.show({
+                  type: 'success',
+                  text1: 'Database Reset Complete!',
+                  text2: 'System workouts have been recreated',
+                  position: 'top',
+                  topOffset: 100
+                });
+              } else {
+                Toast.show({
+                  type: 'error',
+                  text1: 'Reset Failed',
+                  text2: result.error || 'Failed to reset database',
+                  position: 'top',
+                  topOffset: 100
+                });
+              }
+            } catch (error) {
+              console.error('Error resetting database:', error);
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'An unexpected error occurred during reset',
+                position: 'top',
+                topOffset: 100
+              });
+            } finally {
+              setIsResettingDB(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleExportWorkouts = async () => {
+    if (!currentUser) {
+      Toast.show({
+        type: 'error',
+        text1: 'No User',
+        text2: 'Please create a user profile first',
+        position: 'top',
+        topOffset: 100
+      });
+      return;
+    }
+
+    try {
+      setIsExportingWorkouts(true);
+      
+      Toast.show({
+        type: 'info',
+        text1: 'Exporting Workouts...',
+        text2: 'Preparing your workout data',
+        position: 'top',
+        topOffset: 100
+      });
+      
+      const userId = currentUser.username || currentUser.id;
+      const result = await exportWorkoutsToCSV(userId);
+      
+      if (result.success) {
+        // For now, show success and copy data to clipboard or show in alert
+        Alert.alert(
+          'Workouts Exported',
+          `Successfully exported ${result.count} workouts. The CSV data is ready to be saved.`,
+          [
+            {
+              text: 'View Data',
+              onPress: () => {
+                Alert.alert('CSV Data', result.data, [{ text: 'OK' }]);
+              }
+            },
+            { text: 'OK' }
+          ]
+        );
+        
+        Toast.show({
+          type: 'success',
+          text1: 'Export Complete!',
+          text2: `${result.count} workouts exported successfully`,
+          position: 'top',
+          topOffset: 100
+        });
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Export Failed',
+          text2: result.message || result.error || 'Failed to export workouts',
+          position: 'top',
+          topOffset: 100
+        });
+      }
+    } catch (error) {
+      console.error('Error exporting workouts:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Export Error',
+        text2: 'An unexpected error occurred during export',
+        position: 'top',
+        topOffset: 100
+      });
+    } finally {
+      setIsExportingWorkouts(false);
+    }
+  };
+
+  const handleExportUserData = async () => {
+    if (!currentUser) {
+      Toast.show({
+        type: 'error',
+        text1: 'No User',
+        text2: 'Please create a user profile first',
+        position: 'top',
+        topOffset: 100
+      });
+      return;
+    }
+
+    try {
+      setIsExportingUserData(true);
+      
+      Toast.show({
+        type: 'info',
+        text1: 'Exporting User Data...',
+        text2: 'Preparing your profile and measurements',
+        position: 'top',
+        topOffset: 100
+      });
+      
+      const userId = currentUser.username || currentUser.id;
+      const result = await exportUserDataToCSV(userId);
+      
+      if (result.success) {
+        // For now, show success and copy data to clipboard or show in alert
+        const message = `Profile exported with ${result.measurementCount} measurements`;
+        
+        Alert.alert(
+          'User Data Exported',
+          message,
+          [
+            {
+              text: 'View Data',
+              onPress: () => {
+                Alert.alert('CSV Data', result.data, [{ text: 'OK' }]);
+              }
+            },
+            { text: 'OK' }
+          ]
+        );
+        
+        Toast.show({
+          type: 'success',
+          text1: 'Export Complete!',
+          text2: message,
+          position: 'top',
+          topOffset: 100
+        });
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Export Failed',
+          text2: result.message || result.error || 'Failed to export user data',
+          position: 'top',
+          topOffset: 100
+        });
+      }
+    } catch (error) {
+      console.error('Error exporting user data:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Export Error',
+        text2: 'An unexpected error occurred during export',
+        position: 'top',
+        topOffset: 100
+      });
+    } finally {
+      setIsExportingUserData(false);
+    }
+  };
+
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1 }} edges={['top']}>
       <ScrollView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.avatarContainer}>
@@ -459,10 +672,39 @@ export default function Profile() {
           </Text>
           <Ionicons name="warning-outline" size={20} color="#e74c3c" />
         </TouchableOpacity>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.comingSoon}>Profile features coming soon!</Text>
+        <TouchableOpacity 
+          style={[styles.settingItem, isResettingDB && styles.settingItemDisabled]} 
+          onPress={handleResetDatabase}
+          disabled={isResettingDB}
+        >
+          <Ionicons name="construct-outline" size={24} color={isResettingDB ? "#ccc" : "#ff6b35"} />
+          <Text style={[styles.settingText, isResettingDB && styles.settingTextDisabled]}>
+            {isResettingDB ? 'Resetting Database...' : 'Reset Database Schema'}
+          </Text>
+          <Ionicons name="warning-outline" size={20} color="#ff6b35" />
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.settingItem, isExportingWorkouts && styles.settingItemDisabled]} 
+          onPress={handleExportWorkouts}
+          disabled={isExportingWorkouts}
+        >
+          <Ionicons name="download-outline" size={24} color={isExportingWorkouts ? "#ccc" : "#155724"} />
+          <Text style={[styles.settingText, isExportingWorkouts && styles.settingTextDisabled]}>
+            {isExportingWorkouts ? 'Exporting Workouts...' : 'Export Workouts CSV'}
+          </Text>
+          <Ionicons name="document-outline" size={20} color="#155724" />
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.settingItem, isExportingUserData && styles.settingItemDisabled]} 
+          onPress={handleExportUserData}
+          disabled={isExportingUserData}
+        >
+          <Ionicons name="person-outline" size={24} color={isExportingUserData ? "#ccc" : "#0056b3"} />
+          <Text style={[styles.settingText, isExportingUserData && styles.settingTextDisabled]}>
+            {isExportingUserData ? 'Exporting User Data...' : 'Export User Data CSV'}
+          </Text>
+          <Ionicons name="document-outline" size={20} color="#0056b3" />
+        </TouchableOpacity>
       </View>
       
       {/* User Creation Modal */}

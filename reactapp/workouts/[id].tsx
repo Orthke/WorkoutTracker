@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View, TouchableOpacity, Modal, TextInput } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 interface Exercise {
   id: number;
@@ -14,6 +14,7 @@ interface Exercise {
   press_pull?: string;
   category?: string;
   exercise_order?: number;
+  bodyweight?: boolean;
 }
 
 interface WorkoutWithExercises {
@@ -29,7 +30,7 @@ interface WorkoutWithExercises {
 
 interface SetData {
   weight: string;
-  difficulty: 'easy' | 'medium' | 'hard' | '';
+  difficulty: 1 | 2 | 3 | 4 | 5 | '';
 }
 
 export default function WorkoutScreen() {
@@ -141,7 +142,7 @@ export default function WorkoutScreen() {
     setSets(newSets);
   };
 
-  const updateSetDifficulty = (setIndex: number, difficulty: 'easy' | 'medium' | 'hard') => {
+  const updateSetDifficulty = (setIndex: number, difficulty: 1 | 2 | 3 | 4 | 5) => {
     const newSets = [...sets];
     newSets[setIndex].difficulty = difficulty;
     setSets(newSets);
@@ -199,7 +200,7 @@ export default function WorkoutScreen() {
             <View style={styles.exerciseDetails}>
               {exercise.base_sets && exercise.base_reps && (
                 <Text style={styles.setsReps}>
-                  {exercise.base_sets} sets × {exercise.base_reps} reps
+                  {exercise.base_sets} sets × {exercise.base_reps} {exercise.bodyweight ? 'seconds' : 'reps'}
                 </Text>
               )}
               {exercise.minor_group && (
@@ -234,7 +235,7 @@ export default function WorkoutScreen() {
               <View style={styles.exerciseInfo}>
                 <Text style={styles.modalExerciseDescription}>{selectedExercise.description}</Text>
                 <Text style={styles.modalSetsReps}>
-                  {selectedExercise.base_sets} sets × {selectedExercise.base_reps} reps
+                  {selectedExercise.base_sets} sets × {selectedExercise.base_reps} {selectedExercise.bodyweight ? 'seconds' : 'reps'}
                 </Text>
               </View>
               
@@ -259,15 +260,17 @@ export default function WorkoutScreen() {
                     <View style={styles.difficultySection}>
                       <Text style={styles.difficultyLabel}>Difficulty:</Text>
                       <View style={styles.difficultyButtons}>
-                        {(['easy', 'medium', 'hard'] as const).map((difficulty) => (
+                        {([1, 2, 3, 4, 5] as const).map((difficulty) => (
                           <TouchableOpacity
                             key={difficulty}
                             style={[
                               styles.difficultyButton,
                               set.difficulty === difficulty && styles.difficultyButtonActive,
-                              difficulty === 'easy' && styles.easyButton,
-                              difficulty === 'medium' && styles.mediumButton,
-                              difficulty === 'hard' && styles.hardButton,
+                              difficulty === 1 && styles.level1Button,
+                              difficulty === 2 && styles.level2Button,
+                              difficulty === 3 && styles.level3Button,
+                              difficulty === 4 && styles.level4Button,
+                              difficulty === 5 && styles.level5Button,
                             ]}
                             onPress={() => updateSetDifficulty(index, difficulty)}
                           >
@@ -275,7 +278,7 @@ export default function WorkoutScreen() {
                               styles.difficultyButtonText,
                               set.difficulty === difficulty && styles.difficultyButtonTextActive
                             ]}>
-                              {difficulty.charAt(0).toUpperCase() + difficulty.slice(1)}
+                              {difficulty}
                             </Text>
                           </TouchableOpacity>
                         ))}
@@ -546,14 +549,21 @@ const styles = StyleSheet.create({
   },
   difficultyButtonActive: {
     backgroundColor: '#fff',
+    borderWidth: 3,
   },
-  easyButton: {
+  level1Button: {
     borderColor: '#4caf50',
   },
-  mediumButton: {
+  level2Button: {
+    borderColor: '#8bc34a',
+  },
+  level3Button: {
     borderColor: '#ff9800',
   },
-  hardButton: {
+  level4Button: {
+    borderColor: '#ff5722',
+  },
+  level5Button: {
     borderColor: '#f44336',
   },
   difficultyButtonText: {

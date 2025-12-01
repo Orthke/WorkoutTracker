@@ -1,17 +1,23 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import DraggableFlatList, { RenderItemParams } from 'react-native-draggable-flatlist';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import CustomNavigation from '../components/CustomNavigation';
 import {
+  archiveWorkout,
   deleteWorkoutFromDB,
   getActiveWorkout,
+  getArchivedWorkoutsFromDB,
   getCurrentUser,
+  getUserWorkoutHistory,
   getWorkoutWithExercises,
   getWorkoutsFromDB,
-  initDatabase
+  initDatabase,
+  restoreWorkout,
+  updateWorkoutOrder
 } from '../utils/database';
 
 interface Workout {
@@ -25,12 +31,40 @@ interface Workout {
 export default function WorkoutList() {
   const router = useRouter();
   const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [archivedWorkouts, setArchivedWorkouts] = useState<Workout[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [archiveDeleteModalVisible, setArchiveDeleteModalVisible] = useState(false);
   const [workoutToDelete, setWorkoutToDelete] = useState<Workout | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [activeWorkoutId, setActiveWorkoutId] = useState<number | null>(null);
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
+  const [showArchivedWorkouts, setShowArchivedWorkouts] = useState(false);
+  const [lastCompletedWorkout, setLastCompletedWorkout] = useState<{workout_id: number, workout_name: string, completed_at: string} | null>(null);
+
+  const loadLastCompletedWorkout = useCallback(async () => {
+    try {
+      // Get current user
+      const user = await getCurrentUser();
+      const userId = user?.username || user?.id || 'default';
+      
+      // Get the most recent workout completion
+      const workoutHistory = await getUserWorkoutHistory(userId, 1);
+      if (workoutHistory && workoutHistory.length > 0) {
+        const lastWorkout = workoutHistory[0];
+        setLastCompletedWorkout({
+          workout_id: lastWorkout.workout_id,
+          workout_name: lastWorkout.workout_name,
+          completed_at: lastWorkout.completed_at
+        });
+      } else {
+        setLastCompletedWorkout(null);
+      }
+    } catch (error) {
+      console.error('Error loading last completed workout:', error);
+      setLastCompletedWorkout(null);
+    }
+  }, []);
 
   const loadWorkouts = useCallback(async () => {
     try {
@@ -42,14 +76,21 @@ export default function WorkoutList() {
       const dbWorkouts = await getWorkoutsFromDB();
       setWorkouts(dbWorkouts);
       
+      // Load archived workouts
+      const archivedDbWorkouts = await getArchivedWorkoutsFromDB();
+      setArchivedWorkouts(archivedDbWorkouts);
+      
       // Check for active workout
       await checkActiveWorkout();
+      
+      // Load last completed workout
+      await loadLastCompletedWorkout();
     } catch (error) {
       console.error('Error loading workouts:', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadLastCompletedWorkout]);
 
   const checkActiveWorkout = async () => {
     try {
@@ -96,7 +137,80 @@ export default function WorkoutList() {
 
   const handleDeleteWorkout = (workout: Workout) => {
     setWorkoutToDelete(workout);
-    setDeleteModalVisible(true);
+    setArchiveDeleteModalVisible(true);
+  };
+
+  const handleReorderWorkouts = async (data: Workout[]) => {
+    try {
+      // Update local state immediately
+      setWorkouts(data);
+      
+      // Update order in database
+      for (let i = 0; i < data.length; i++) {
+        await updateWorkoutOrder(data[i].id, i + 1);
+      }
+    } catch (error) {
+      console.error('Error reordering workouts:', error);
+      // Reload workouts to revert changes
+      loadWorkouts();
+    }
+  };
+
+  const handleArchiveWorkout = async () => {
+    if (!workoutToDelete) return;
+    
+    try {
+      setDeleting(true);
+      await archiveWorkout(workoutToDelete.id);
+      
+      // Refresh workout lists
+      await loadWorkouts();
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Workout Archived',
+        text2: `${workoutToDelete.name} was archived successfully`,
+        visibilityTime: 3000,
+      });
+      
+    } catch (error) {
+      console.error('Error archiving workout:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Archive Failed',
+        text2: 'Failed to archive workout. Please try again.',
+        visibilityTime: 3000,
+      });
+    } finally {
+      setDeleting(false);
+      setArchiveDeleteModalVisible(false);
+      setWorkoutToDelete(null);
+    }
+  };
+
+  const handleRestoreWorkout = async (workout: Workout) => {
+    try {
+      await restoreWorkout(workout.id);
+      
+      // Refresh workout lists
+      await loadWorkouts();
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Workout Restored',
+        text2: `${workout.name} was restored successfully`,
+        visibilityTime: 3000,
+      });
+      
+    } catch (error) {
+      console.error('Error restoring workout:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Restore Failed',
+        text2: 'Failed to restore workout. Please try again.',
+        visibilityTime: 3000,
+      });
+    }
   };
 
   const confirmDelete = async () => {
@@ -126,19 +240,14 @@ export default function WorkoutList() {
       });
     } finally {
       setDeleting(false);
-      setDeleteModalVisible(false);
+      setArchiveDeleteModalVisible(false);
       setWorkoutToDelete(null);
     }
   };
 
-  const cancelDelete = () => {
-    setDeleteModalVisible(false);
-    setWorkoutToDelete(null);
-  };
-
   if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading workouts...</Text>
@@ -149,12 +258,21 @@ export default function WorkoutList() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <ScrollView style={styles.container}>
+    <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+      <View style={styles.container}>
         <View style={styles.header}>
           <View style={styles.placeholder} />
           <Text style={styles.title}>Select Workout</Text>
-          <View style={styles.placeholder} />
+          <TouchableOpacity 
+            style={styles.editButton} 
+            onPress={() => setIsEditMode(!isEditMode)}
+          >
+            <Ionicons 
+              name={isEditMode ? "checkmark" : "create-outline"} 
+              size={24} 
+              color={isEditMode ? "#28a745" : "#155724"} 
+            />
+          </TouchableOpacity>
         </View>
 
         {/* Active Workout Banner */}
@@ -179,96 +297,275 @@ export default function WorkoutList() {
           </View>
         )}
 
-        <View style={styles.workoutsContainer}>
-          {workouts.map((workout, index) => {
-            const isActiveWorkout = activeWorkout && activeWorkout.id === workout.id;
-            return (
-            <View key={`workout-${workout.id}-${index}`} style={[styles.workoutCard, isActiveWorkout && { backgroundColor: '#e8f5e8', borderColor: '#28a745', borderWidth: 2, shadowColor: '#28a745', shadowOpacity: 0.2 }]}>
-              {isActiveWorkout && (
-                <View style={{ position: 'absolute', top: -6, right: 12, backgroundColor: '#28a745', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, zIndex: 1 }}>
-                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 }}>ACTIVE</Text>
+        {isEditMode ? (
+          <DraggableFlatList
+            data={workouts}
+            onDragEnd={({ data }) => handleReorderWorkouts(data)}
+            keyExtractor={(item, index) => `workout-${item.id}-${index}`}
+            renderItem={({ item: workout, drag, isActive }: RenderItemParams<Workout>) => {
+              const isActiveWorkout = activeWorkout && activeWorkout.id === workout.id;
+              return (
+                <View style={[styles.workoutCard, isActiveWorkout && styles.activeWorkoutCard, isActive && styles.draggingCard]}>
+                  {isActiveWorkout && (
+                    <View style={styles.activeWorkoutBadge}>
+                      <Text style={styles.activeWorkoutBadgeText}>ACTIVE</Text>
+                    </View>
+                  )}
+                  <TouchableOpacity 
+                    style={styles.workoutContent}
+                    onPress={() => handleWorkoutPress(workout.id)}
+                  >
+                    <Text style={[styles.workoutName, isActiveWorkout && styles.activeWorkoutTextStyle]}>{workout.name}</Text>
+                    <Text style={[styles.workoutDetails, isActiveWorkout && styles.activeWorkoutTextStyle]}>
+                      {workout.num_exercises} exercises • {workout.duration} min
+                    </Text>
+                    <Text style={[styles.workoutGroup, isActiveWorkout && styles.activeWorkoutTextStyle]}>{workout.major_group}</Text>
+                  </TouchableOpacity>
+                  <View style={styles.workoutActions}>
+                    <TouchableOpacity
+                      style={styles.actionButton}
+                      onPress={() => handleEditWorkout(workout.id)}
+                    >
+                      <Ionicons name="create-outline" size={20} color="#155724" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.deleteButton]}
+                      onPress={() => handleDeleteWorkout(workout)}
+                    >
+                      <Ionicons name="trash-outline" size={20} color="#e74c3c" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.dragHandle]}
+                      onPressIn={drag}
+                    >
+                      <Ionicons name="reorder-three-outline" size={20} color="#666" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              )}
-              <TouchableOpacity 
-                style={styles.workoutContent}
-                onPress={() => handleWorkoutPress(workout.id)}
-              >
-                <Text style={[styles.workoutName, isActiveWorkout && { color: '#155724', fontWeight: '700' }]}>{workout.name}</Text>
-                <Text style={[styles.workoutDetails, isActiveWorkout && { color: '#155724' }]}>
-                  {workout.num_exercises} exercises • {workout.duration} min
-                </Text>
-                <Text style={[styles.workoutGroup, isActiveWorkout && { color: '#155724', fontWeight: '500' }]}>{workout.major_group}</Text>
-              </TouchableOpacity>
-              <View style={styles.workoutActions}>
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => handleEditWorkout(workout.id)}
-                >
-                  <Ionicons name="create-outline" size={20} color="#155724" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.deleteButton]}
-                  onPress={() => handleDeleteWorkout(workout)}
-                >
-                  <Ionicons name="trash-outline" size={20} color="#e74c3c" />
-                </TouchableOpacity>
-              </View>
-            </View>
-            );
-          })}
-        </View>
+              );
+            }}
+            contentContainerStyle={styles.workoutsContainer}
+            ListFooterComponent={() => (
+              <>
+                {/* Archived Workouts Section */}
+                {archivedWorkouts.length > 0 && (
+                  <View style={styles.archivedSection}>
+                    <TouchableOpacity 
+                      style={styles.archivedHeader}
+                      onPress={() => setShowArchivedWorkouts(!showArchivedWorkouts)}
+                    >
+                      <Text style={styles.archivedTitle}>Archived Workouts ({archivedWorkouts.length})</Text>
+                      <Ionicons 
+                        name={showArchivedWorkouts ? "chevron-up" : "chevron-down"} 
+                        size={20} 
+                        color="#666" 
+                      />
+                    </TouchableOpacity>
+                    
+                    {showArchivedWorkouts && (
+                      <View style={styles.archivedList}>
+                        {archivedWorkouts.map((workout, index) => (
+                          <View key={`archived-${workout.id}-${index}`} style={styles.archivedWorkoutCard}>
+                            <View style={styles.workoutContent}>
+                              <Text style={styles.archivedWorkoutName}>{workout.name}</Text>
+                              <Text style={styles.archivedWorkoutDetails}>
+                                {workout.num_exercises} exercises • {workout.duration} min
+                              </Text>
+                              <Text style={styles.archivedWorkoutGroup}>{workout.major_group}</Text>
+                            </View>
+                            <TouchableOpacity
+                              style={styles.restoreButton}
+                              onPress={() => handleRestoreWorkout(workout)}
+                            >
+                              <Ionicons name="refresh-outline" size={20} color="#28a745" />
+                              <Text style={styles.restoreButtonText}>Restore</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+                
+                {/* Create Workout Button - Centered Below Workouts */}
+                <View style={styles.createWorkoutSection}>
+                  <TouchableOpacity
+                    style={styles.createWorkoutButton}
+                    onPress={() => router.push('/create-workout')}
+                  >
+                    <Ionicons name="add" size={32} color="#fff" />
+                  </TouchableOpacity>
+                  <Text style={styles.createWorkoutText}>Create New Workout</Text>
+                </View>
+              </>
+            )}
+          />
+        ) : (
+          <FlatList
+            data={workouts}
+            keyExtractor={(item, index) => `workout-${item.id}-${index}`}
+            renderItem={({ item: workout, index }) => {
+              const isActiveWorkout = activeWorkout && activeWorkout.id === workout.id;
+              const isLastCompleted = lastCompletedWorkout?.workout_id === workout.id;
+              
+              const formatLastCompletedDate = (dateString: string) => {
+                try {
+                  const date = new Date(dateString);
+                  const now = new Date();
+                  const diffTime = now.getTime() - date.getTime();
+                  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                  
+                  if (diffDays === 0) {
+                    return 'Today';
+                  } else if (diffDays === 1) {
+                    return 'Yesterday';
+                  } else if (diffDays < 7) {
+                    return `${diffDays} days ago`;
+                  } else {
+                    return date.toLocaleDateString();
+                  }
+                } catch {
+                  return 'Unknown';
+                }
+              };
+              
+              return (
+                <View style={[
+                  styles.workoutCard, 
+                  isActiveWorkout && styles.activeWorkoutCard,
+                  isLastCompleted && styles.lastCompletedWorkoutCard
+                ]}>
+                  {isActiveWorkout && (
+                    <View style={styles.activeWorkoutBadge}>
+                      <Text style={styles.activeWorkoutBadgeText}>ACTIVE</Text>
+                    </View>
+                  )}
+                  <TouchableOpacity 
+                    style={styles.workoutContent}
+                    onPress={() => handleWorkoutPress(workout.id)}
+                  >
+                    <Text style={[styles.workoutName, isActiveWorkout && styles.activeWorkoutTextStyle]}>{workout.name}</Text>
+                    <Text style={[styles.workoutDetails, isActiveWorkout && styles.activeWorkoutTextStyle]}>
+                      {workout.num_exercises} exercises • {workout.duration} min
+                    </Text>
+                    <Text style={[styles.workoutGroup, isActiveWorkout && styles.activeWorkoutTextStyle]}>{workout.major_group}</Text>
+                    {isLastCompleted && (
+                      <View style={styles.lastCompletedIndicator}>
+                        <Ionicons name="checkmark-circle" size={16} color="#28a745" />
+                        <Text style={styles.lastCompletedText}>
+                          Last completed: {formatLastCompletedDate(lastCompletedWorkout!.completed_at)}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              );
+            }}
+            contentContainerStyle={styles.workoutsContainer}
+            ListFooterComponent={() => (
+              <>
+                {/* Archived Workouts Section */}
+                {archivedWorkouts.length > 0 && (
+                  <View style={styles.archivedSection}>
+                    <TouchableOpacity 
+                      style={styles.archivedHeader}
+                      onPress={() => setShowArchivedWorkouts(!showArchivedWorkouts)}
+                    >
+                      <Text style={styles.archivedTitle}>Archived Workouts ({archivedWorkouts.length})</Text>
+                      <Ionicons 
+                        name={showArchivedWorkouts ? "chevron-up" : "chevron-down"} 
+                        size={20} 
+                        color="#666" 
+                      />
+                    </TouchableOpacity>
+                    
+                    {showArchivedWorkouts && (
+                      <View style={styles.archivedList}>
+                        {archivedWorkouts.map((workout, index) => (
+                          <View key={`archived-${workout.id}-${index}`} style={styles.archivedWorkoutCard}>
+                            <View style={styles.workoutContent}>
+                              <Text style={styles.archivedWorkoutName}>{workout.name}</Text>
+                              <Text style={styles.archivedWorkoutDetails}>
+                                {workout.num_exercises} exercises • {workout.duration} min
+                              </Text>
+                              <Text style={styles.archivedWorkoutGroup}>{workout.major_group}</Text>
+                            </View>
+                            <TouchableOpacity
+                              style={styles.restoreButton}
+                              onPress={() => handleRestoreWorkout(workout)}
+                            >
+                              <Ionicons name="refresh-outline" size={20} color="#28a745" />
+                              <Text style={styles.restoreButtonText}>Restore</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+                
+                {/* Create Workout Button - Centered Below Workouts */}
+                <View style={styles.createWorkoutSection}>
+                  <TouchableOpacity
+                    style={styles.createWorkoutButton}
+                    onPress={() => router.push('/create-workout')}
+                  >
+                    <Ionicons name="add" size={32} color="#fff" />
+                  </TouchableOpacity>
+                  <Text style={styles.createWorkoutText}>Create New Workout</Text>
+                </View>
+              </>
+            )}
+          />
+        )}
         
-        {/* Create Workout Button - Centered Below Workouts */}
-        <View style={styles.createWorkoutSection}>
-          <TouchableOpacity
-            style={styles.createWorkoutButton}
-            onPress={() => router.push('/create-workout')}
-          >
-            <Ionicons name="add" size={32} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.createWorkoutText}>Create New Workout</Text>
-        </View>
-        
-        {/* Delete Confirmation Modal */}
+        {/* Archive/Delete Choice Modal */}
         <Modal
-          visible={deleteModalVisible}
+          visible={archiveDeleteModalVisible}
           transparent={true}
           animationType="fade"
-          onRequestClose={cancelDelete}
+          onRequestClose={() => setArchiveDeleteModalVisible(false)}
         >
           <View style={styles.modalOverlay}>
             <View style={styles.deleteModal}>
               <View style={styles.deleteModalHeader}>
-                <Ionicons name="warning" size={24} color="#e74c3c" />
-                <Text style={styles.deleteModalTitle}>Delete Workout</Text>
+                <Ionicons name="help-circle" size={24} color="#ff6b35" />
+                <Text style={styles.deleteModalTitle}>What would you like to do?</Text>
               </View>
               <Text style={styles.deleteModalMessage}>
-                Are you sure you want to delete &ldquo;{workoutToDelete?.name}&rdquo;? This action cannot be undone.
+                Archive &ldquo;{workoutToDelete?.name}&rdquo; to keep your data but hide it from the list, or permanently delete it.
               </Text>
               <View style={styles.deleteModalActions}>
                 <TouchableOpacity 
                   style={styles.cancelButton}
-                  onPress={cancelDelete}
+                  onPress={() => setArchiveDeleteModalVisible(false)}
                   disabled={deleting}
                 >
                   <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.archiveButton, deleting && styles.deleteConfirmButtonDisabled]}
+                  onPress={handleArchiveWorkout}
+                  disabled={deleting}
+                >
+                  {deleting ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.archiveButtonText}>Archive</Text>
+                  )}
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={[styles.deleteConfirmButton, deleting && styles.deleteConfirmButtonDisabled]}
                   onPress={confirmDelete}
                   disabled={deleting}
                 >
-                  {deleting ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.deleteConfirmButtonText}>Delete</Text>
-                  )}
+                  <Text style={styles.deleteConfirmButtonText}>Delete Forever</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
         </Modal>
-      </ScrollView>
+      </View>
       
       <CustomNavigation active="workout" />
     </SafeAreaView>
@@ -304,6 +601,14 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     width: 24, // Same width as back button for centering
+  },
+  editButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f0f0f0',
   },
   activeWorkoutBanner: {
     backgroundColor: '#fff3cd',
@@ -496,6 +801,145 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   deleteConfirmButtonText: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  // Active workout styles
+  activeWorkoutCard: {
+    backgroundColor: '#e8f5e8',
+    borderColor: '#28a745',
+    borderWidth: 2,
+    shadowColor: '#28a745',
+    shadowOpacity: 0.2,
+  },
+  lastCompletedWorkoutCard: {
+    borderColor: '#28a745',
+    borderWidth: 1,
+    backgroundColor: '#f8fff8',
+  },
+  activeWorkoutBadge: {
+    position: 'absolute',
+    top: -6,
+    right: 12,
+    backgroundColor: '#28a745',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    zIndex: 1,
+  },
+  activeWorkoutBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
+  },
+  activeWorkoutTextStyle: {
+    color: '#155724',
+    fontWeight: '700',
+  },
+  // Drag and drop styles
+  draggingCard: {
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  dragHandle: {
+    backgroundColor: '#f8f8f8',
+  },
+  // Archived workouts styles
+  archivedSection: {
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  archivedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8f9fa',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+  },
+  archivedTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6c757d',
+  },
+  archivedList: {
+    marginTop: 8,
+  },
+  archivedWorkoutCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+  },
+  archivedWorkoutName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#6c757d',
+    marginBottom: 4,
+  },
+  archivedWorkoutDetails: {
+    fontSize: 14,
+    color: '#adb5bd',
+    marginBottom: 4,
+  },
+  archivedWorkoutGroup: {
+    fontSize: 12,
+    color: '#adb5bd',
+    fontStyle: 'italic',
+  },
+  restoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#d4edda',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginRight: 16,
+  },
+  restoreButtonText: {
+    fontSize: 12,
+    color: '#28a745',
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  lastCompletedIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  lastCompletedText: {
+    fontSize: 12,
+    color: '#28a745',
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+
+  // Archive modal styles
+  archiveButton: {
+    backgroundColor: '#ff6b35',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    minWidth: 80,
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  archiveButtonText: {
     fontSize: 16,
     color: '#fff',
     fontWeight: '600',

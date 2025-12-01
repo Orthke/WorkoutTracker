@@ -114,23 +114,17 @@ export default function DebugScreen() {
   }, [loadData]);
 
   const handleClearUserStats = async () => {
-    console.log('🔥 Clear User Stats button pressed!');
-    // Bypass Alert for testing
-    console.log('🔥 Clear Stats confirmed, calling clearUserStats...');
     try {
       const currentUser = await getCurrentUser();
       const userId = currentUser?.username || currentUser?.id || 'default';
-      console.log('🔥 Current user:', currentUser);
-      console.log('🔥 Using userId:', userId);
       
       const result = await clearUserStats(userId);
-      console.log('🔥 clearUserStats result:', result);
       if (result.success) {
         Toast.show({
           type: 'success',
           text1: 'Stats Cleared',
           text2: 'User stats and data cleared successfully',
-          visibilityTime: 2000,
+          visibilityTime: 1000,
         });
         // Reload the data
         loadData();
@@ -139,7 +133,7 @@ export default function DebugScreen() {
           type: 'error',
           text1: 'Error',
           text2: result.error || 'Failed to clear user stats',
-          visibilityTime: 2000,
+          visibilityTime: 1000,
         });
       }
     } catch (error) {
@@ -148,7 +142,7 @@ export default function DebugScreen() {
         type: 'error',
         text1: 'Error',
         text2: 'Failed to clear user stats',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     }
   };
@@ -174,7 +168,7 @@ export default function DebugScreen() {
                   type: 'success',
                   text1: 'Deleted',
                   text2: `Record for ${exerciseName} deleted`,
-                  visibilityTime: 2000,
+                  visibilityTime: 1000,
                 });
                 loadData(); // Refresh data
               } else {
@@ -186,7 +180,7 @@ export default function DebugScreen() {
                 type: 'error',
                 text1: 'Error',
                 text2: 'Failed to delete exercise record',
-                visibilityTime: 2000,
+                visibilityTime: 1000,
               });
             }
           },
@@ -208,18 +202,20 @@ export default function DebugScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading debug data...</Text>
         </View>
-        <CustomNavigation active="debug" />
+        <View style={{ paddingBottom: 34 }}>
+          <CustomNavigation active="debug" />
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1 }} edges={['top']}>
       <ScrollView style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
@@ -282,7 +278,7 @@ export default function DebugScreen() {
                   type: 'info',
                   text1: 'Debug Complete',
                   text2: 'Check console for users table data',
-                  visibilityTime: 2000,
+                  visibilityTime: 1000,
                 });
               } catch (error) {
                 console.error('Error debugging users:', error);
@@ -300,7 +296,7 @@ export default function DebugScreen() {
                   type: 'info',
                   text1: 'Debug Complete',
                   text2: 'Check console for user workouts data',
-                  visibilityTime: 2000,
+                  visibilityTime: 1000,
                 });
               } catch (error) {
                 console.error('Error debugging user workouts:', error);
@@ -365,7 +361,7 @@ export default function DebugScreen() {
                     type: 'success',
                     text1: 'Data Cleared',
                     text2: 'All user data has been reset',
-                    visibilityTime: 2000,
+                    visibilityTime: 1000,
                   });
                   // Reload the debug data
                   await loadData();
@@ -378,7 +374,7 @@ export default function DebugScreen() {
                   type: 'error',
                   text1: 'Error',
                   text2: 'Failed to clear user data',
-                  visibilityTime: 2000,
+                  visibilityTime: 1000,
                 });
               }
             }}
@@ -478,7 +474,9 @@ export default function DebugScreen() {
         )}
       </ScrollView>
 
-      <CustomNavigation active="debug" />
+      <View style={{ paddingBottom: 34 }}>
+        <CustomNavigation active="debug" />
+      </View>
     </SafeAreaView>
   );
 }

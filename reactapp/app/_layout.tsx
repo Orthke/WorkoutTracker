@@ -25,6 +25,7 @@ export default function RootLayout() {
         <Stack.Screen name="edit-workout/[id]" />
       </Stack>
       <Toast 
+        topOffset={100}
         config={{
           success: (props) => (
             <View style={{

@@ -46,6 +46,58 @@ export const initDatabase = async () => {
       console.log('Database opened successfully');
     }
 
+    // Check if we need to force schema update (for missing critical columns)
+    try {
+      // Check if users table has the required columns
+      const usersInfo = db.getAllSync('PRAGMA table_info(users)');
+      const hasActiveWorkout = usersInfo.some(col => col.name === 'active_workout');
+      
+      // Check if user_workouts table has session_guid column
+      let hasSessionGuid = false;
+      try {
+        const userWorkoutsInfo = db.getAllSync('PRAGMA table_info(user_workouts)');
+        hasSessionGuid = userWorkoutsInfo.some(col => col.name === 'session_guid');
+      } catch (_error) {
+        // Table might not exist yet
+      }
+      
+      if (!hasActiveWorkout || !hasSessionGuid) {
+        console.log('Missing critical columns detected (active_workout:', !hasActiveWorkout, ', session_guid:', !hasSessionGuid, '), forcing database recreation...');
+        
+        // Drop and recreate all tables to ensure proper schema
+        const tables = ['active_workout_sessions', 'user_workouts', 'user_sessions', 'users', 
+                       'workout_exercises', 'workouts', 'user_exercises', 'user_measurements', 'favorites', 'exercises'];
+        
+        for (const table of tables) {
+          try {
+            db.execSync(`DROP TABLE IF EXISTS ${table}`);
+            console.log(`Dropped table: ${table}`);
+          } catch (_error) {
+            // Table might not exist, ignore
+          }
+        }
+        
+        console.log('Old tables dropped, creating fresh schema...');
+      }
+    } catch (error) {
+      console.log('Schema check failed, proceeding with forced recreation due to API compatibility:', error);
+      
+      // Force recreation anyway since schema check failed
+      const tables = ['active_workout_sessions', 'user_workouts', 'user_sessions', 'users', 
+                     'workout_exercises', 'workouts', 'user_exercises', 'user_measurements', 'favorites', 'exercises'];
+      
+      for (const table of tables) {
+        try {
+          db.execSync(`DROP TABLE IF EXISTS ${table}`);
+          console.log(`Dropped table: ${table}`);
+        } catch (_error) {
+          // Table might not exist, ignore
+        }
+      }
+      
+      console.log('Forced table recreation due to schema check failure...');
+    }
+
     // Create exercises table
     db.execSync(CREATE_EXERCISES_TABLE);
     console.log('Exercises table created successfully');
@@ -101,24 +153,51 @@ export const initDatabase = async () => {
       // Column already exists, ignore error
     }
 
-    // Add session_guid column to user_workouts table if it doesn't exist
     try {
-      db.execSync('ALTER TABLE user_workouts ADD COLUMN session_guid TEXT');
-      console.log('Added session_guid column to user_workouts table');
+      db.execSync('ALTER TABLE users ADD COLUMN active_workout INTEGER DEFAULT NULL');
+      console.log('Added active_workout column to users table');
     } catch (_error) {
       // Column already exists, ignore error
     }
 
+    // Add session_guid column to user_workouts table if it doesn't exist
     try {
-      db.execSync('ALTER TABLE active_workout_sessions ADD COLUMN session_guid TEXT');
-      console.log('Added session_guid column to active_workout_sessions table');
-    } catch (_error) {
-      // Column already exists, ignore error
+      // First check if the column exists
+      const userWorkoutsInfo = db.getAllSync('PRAGMA table_info(user_workouts)');
+      const hasSessionGuid = userWorkoutsInfo.some(col => col.name === 'session_guid');
+      
+      if (!hasSessionGuid) {
+        db.execSync('ALTER TABLE user_workouts ADD COLUMN session_guid TEXT');
+        console.log('Added session_guid column to user_workouts table');
+      }
+    } catch (error) {
+      console.error('Error adding session_guid to user_workouts:', error);
+    }
+
+    try {
+      // Check if the column exists in active_workout_sessions
+      const activeSessionsInfo = db.getAllSync('PRAGMA table_info(active_workout_sessions)');
+      const hasSessionGuid = activeSessionsInfo.some(col => col.name === 'session_guid');
+      
+      if (!hasSessionGuid) {
+        db.execSync('ALTER TABLE active_workout_sessions ADD COLUMN session_guid TEXT');
+        console.log('Added session_guid column to active_workout_sessions table');
+      }
+    } catch (error) {
+      console.error('Error adding session_guid to active_workout_sessions:', error);
     }
 
     try {
       db.execSync('ALTER TABLE users ADD COLUMN total_workout_minutes INTEGER DEFAULT 0');
       console.log('Added total_workout_minutes column to users table');
+    } catch (_error) {
+      // Column already exists, ignore error
+    }
+    
+    // Add alternates column to workout_exercises table if it doesn't exist
+    try {
+      db.execSync('ALTER TABLE workout_exercises ADD COLUMN alternates TEXT DEFAULT NULL');
+      console.log('Added alternates column to workout_exercises table');
     } catch (_error) {
       // Column already exists, ignore error
     }
@@ -227,12 +306,52 @@ export const initDatabase = async () => {
   }
 };
 
+// Force recreate system workouts (for repair)
+export const forceRecreateSystemWorkouts = async () => {
+  try {
+    if (!db) throw new Error('Database not initialized');
+    
+    console.log('🔄 Force recreating system workouts...');
+    
+    // First ensure database is initialized (this will recreate tables if needed)
+    await initDatabase();
+    
+    // Delete existing system workouts and their relationships
+    try {
+      db.runSync('DELETE FROM workout_exercises WHERE workout_id IN (SELECT id FROM workouts WHERE user = "system")');
+      db.runSync('DELETE FROM workouts WHERE user = "system"');
+      console.log('  - Deleted existing system workouts');
+    } catch (_deleteError) {
+      console.log('  - Tables were empty or recreated, skipping deletion');
+    }
+    
+    // Recreate system workouts
+    db.execSync(CREATE_DEFAULT_WORKOUTS);
+    console.log('  - Inserted fresh system workouts');
+    
+    // Recreate workout-exercise relationships
+    try {
+      db.execSync(CREATE_WORKOUT_EXERCISE_RELATIONSHIPS);
+      console.log('  - Created exercise relationships');
+    } catch (relationshipError) {
+      console.error('  - Error creating workout exercise relationships:', relationshipError);
+      // Continue anyway, workouts can exist without relationships
+    }
+    
+    console.log('✅ System workouts recreated successfully');
+    return { success: true, message: 'System workouts recreated successfully' };
+  } catch (error) {
+    console.error('❌ Error recreating system workouts:', error);
+    return { success: false, error: error.message };
+  }
+};
+
 // Repair system workouts that exist but have no exercise relationships
 export const repairSystemWorkouts = async () => {
   try {
     if (!db) throw new Error('Database not initialized');
 
-    console.log('🔧 Checking system workouts for missing exercises...');
+    //console.log('🔧 Checking system workouts for missing exercises...');
 
     const systemWorkouts = db.getAllSync('SELECT * FROM workouts WHERE user = "system"');
 
@@ -243,20 +362,23 @@ export const repairSystemWorkouts = async () => {
     }
 
     const defaultWorkoutExercises = {
-      'Push Power': [
-        { name: 'Incline Bench Press', order: 1 },
+      'Strength Training': [
+        { name: 'Squat', order: 1 },
         { name: 'Bench Press', order: 2 },
-        { name: 'Tricep Extension', order: 3 }
+        { name: 'Barbell Row', order: 3 },
+        { name: 'Overhead Press', order: 4 }
       ],
-      'Leg Day Builder': [
-        { name: 'Front Squat', order: 1 },
-        { name: 'Leg Press', order: 2 },
-        { name: 'Calf Raise', order: 3 }
+      'Lower Body': [
+        { name: 'Squat', order: 1 },
+        { name: 'Romanian Deadlift', order: 2 },
+        { name: 'Leg Press', order: 3 },
+        { name: 'Calf Raise', order: 4 }
       ],
-      'Back and Biceps': [
-        { name: 'Pullup', order: 1 },
-        { name: 'Seated Cable Row', order: 2 },
-        { name: 'Bicep Curl', order: 3 }
+      'Upper Body': [
+        { name: 'Bench Press', order: 1 },
+        { name: 'Pullup', order: 2 },
+        { name: 'Overhead Press', order: 3 },
+        { name: 'Barbell Row', order: 4 }
       ]
     };
 
@@ -336,12 +458,102 @@ export const getWorkoutsFromDB = async () => {
   try {
     if (!db) throw new Error('Database not initialized');
     
-    const result = db.getAllSync('SELECT * FROM workouts ORDER BY "order" ASC');
-    return result;
+    // First try with archived column, fallback without it if column doesn't exist
+    try {
+      const result = db.getAllSync('SELECT * FROM workouts WHERE archived = 0 OR archived IS NULL ORDER BY "order" ASC');
+      return result;
+    } catch (_columnError) {
+      // Archived column might not exist yet, fall back to basic query
+      console.log('Archived column not found, using basic query');
+      const result = db.getAllSync('SELECT * FROM workouts ORDER BY "order" ASC');
+      return result;
+    }
   } catch (error) {
     console.error('Error fetching workouts:', error);
     return [];
   }
+};
+
+// Get archived workouts
+export const getArchivedWorkoutsFromDB = async () => {
+  try {
+    if (!db) throw new Error('Database not initialized');
+    
+    const result = db.getAllSync('SELECT * FROM workouts WHERE archived = 1 ORDER BY "order" ASC');
+    return result;
+  } catch (error) {
+    console.error('Error fetching archived workouts:', error);
+    return [];
+  }
+};
+
+// Update workout order
+export const updateWorkoutOrder = async (workoutId, newOrder) => {
+  return new Promise((resolve, reject) => {
+    setTimeout(async () => {
+      try {
+        if (!db) throw new Error('Database not initialized');
+        
+        db.runSync('UPDATE workouts SET "order" = ? WHERE id = ?', [newOrder, workoutId]);
+        resolve();
+      } catch (error) {
+        console.error('Error updating workout order:', error);
+        reject(error);
+      }
+    }, 0);
+  });
+};
+
+// Archive workout
+export const archiveWorkout = async (workoutId) => {
+  return new Promise((resolve, reject) => {
+    setTimeout(async () => {
+      try {
+        if (!db) throw new Error('Database not initialized');
+        
+        db.runSync('UPDATE workouts SET archived = 1 WHERE id = ?', [workoutId]);
+        resolve();
+      } catch (error) {
+        console.error('Error archiving workout:', error);
+        reject(error);
+      }
+    }, 0);
+  });
+};
+
+// Restore archived workout
+export const restoreWorkout = async (workoutId) => {
+  return new Promise((resolve, reject) => {
+    setTimeout(async () => {
+      try {
+        if (!db) throw new Error('Database not initialized');
+        
+        db.runSync('UPDATE workouts SET archived = 0 WHERE id = ?', [workoutId]);
+        resolve();
+      } catch (error) {
+        console.error('Error restoring workout:', error);
+        reject(error);
+      }
+    }, 0);
+  });
+};
+
+// Move workout to different date
+export const moveWorkoutToDate = async (workoutRecordId, newDate) => {
+  return new Promise((resolve, reject) => {
+    setTimeout(async () => {
+      try {
+        if (!db) throw new Error('Database not initialized');
+        
+        // Update the completed_at timestamp to the new date
+        db.runSync('UPDATE user_workouts SET completed_at = ? WHERE id = ?', [newDate, workoutRecordId]);
+        resolve();
+      } catch (error) {
+        console.error('Error moving workout to new date:', error);
+        reject(error);
+      }
+    }, 0);
+  });
 };
 
 // Get workout with exercises
@@ -354,18 +566,33 @@ export const getWorkoutWithExercises = async (workoutId) => {
     
     if (!workout) return null;
     
-    // Get exercises for this workout
+    // Get exercises for this workout with alternates
     const exercises = db.getAllSync(`
-      SELECT e.*, we.exercise_order 
+      SELECT e.*, we.exercise_order, we.alternates 
       FROM exercises e 
       JOIN workout_exercises we ON e.id = we.exercise_id 
       WHERE we.workout_id = ? 
       ORDER BY we.exercise_order ASC
     `, [workoutId]);
     
+    // Parse alternates JSON for each exercise
+    const exercisesWithAlternates = exercises.map(exercise => {
+      if (exercise.alternates) {
+        try {
+          exercise.alternates = JSON.parse(exercise.alternates);
+        } catch (error) {
+          console.error('Error parsing alternates JSON:', error);
+          exercise.alternates = [];
+        }
+      } else {
+        exercise.alternates = [];
+      }
+      return exercise;
+    });
+    
     return {
       ...workout,
-      exercises: exercises
+      exercises: exercisesWithAlternates
     };
   } catch (error) {
     console.error('Error fetching workout with exercises:', error);
@@ -397,9 +624,13 @@ export const addExercisesToWorkout = async (workoutId, exercises) => {
     
     for (let i = 0; i < exercises.length; i++) {
       const exercise = exercises[i];
+      const alternatesJson = exercise.alternates && exercise.alternates.length > 0 
+        ? JSON.stringify(exercise.alternates) 
+        : null;
+      
       db.runSync(
-        'INSERT INTO workout_exercises (workout_id, exercise_id, exercise_order) VALUES (?, ?, ?)',
-        [workoutId, exercise.id, i]
+        'INSERT INTO workout_exercises (workout_id, exercise_id, exercise_order, alternates) VALUES (?, ?, ?, ?)',
+        [workoutId, exercise.id, i, alternatesJson]
       );
     }
     console.log('Exercises added to workout successfully');
@@ -634,38 +865,54 @@ export const getLatestWorkout = async () => {
 
 // Add exercise to favorites
 export const addExerciseToFavorites = async (exerciseId, userId = 'default') => {
-  try {
-    if (!db) throw new Error('Database not initialized');
-    
-    db.runSync(`
-      INSERT OR IGNORE INTO exercise_favorites (user_id, exercise_id)
-      VALUES (?, ?)
-    `, [userId, exerciseId]);
-    
-    console.log('Exercise added to favorites');
-    return true;
-  } catch (error) {
-    console.error('Error adding exercise to favorites:', error);
-    return false;
-  }
+  return new Promise((resolve, reject) => {
+    // Use setTimeout to make this truly asynchronous and avoid blocking UI
+    setTimeout(() => {
+      try {
+        if (!db) {
+          reject(new Error('Database not initialized'));
+          return;
+        }
+        
+        db.runSync(`
+          INSERT OR IGNORE INTO exercise_favorites (user_id, exercise_id)
+          VALUES (?, ?)
+        `, [userId, exerciseId]);
+        
+        console.log('Exercise added to favorites');
+        resolve(true);
+      } catch (error) {
+        console.error('Error adding exercise to favorites:', error);
+        reject(error);
+      }
+    }, 0);
+  });
 };
 
 // Remove exercise from favorites
 export const removeExerciseFromFavorites = async (exerciseId, userId = 'default') => {
-  try {
-    if (!db) throw new Error('Database not initialized');
-    
-    db.runSync(`
-      DELETE FROM exercise_favorites 
-      WHERE user_id = ? AND exercise_id = ?
-    `, [userId, exerciseId]);
-    
-    console.log('Exercise removed from favorites');
-    return true;
-  } catch (error) {
-    console.error('Error removing exercise from favorites:', error);
-    return false;
-  }
+  return new Promise((resolve, reject) => {
+    // Use setTimeout to make this truly asynchronous and avoid blocking UI
+    setTimeout(() => {
+      try {
+        if (!db) {
+          reject(new Error('Database not initialized'));
+          return;
+        }
+        
+        db.runSync(`
+          DELETE FROM exercise_favorites 
+          WHERE user_id = ? AND exercise_id = ?
+        `, [userId, exerciseId]);
+        
+        console.log('Exercise removed from favorites');
+        resolve(true);
+      } catch (error) {
+        console.error('Error removing exercise from favorites:', error);
+        reject(error);
+      }
+    }, 0);
+  });
 };
 
 // Check if exercise is favorited by user
@@ -1876,3 +2123,130 @@ export const debugUserWorkouts = async () => {
     return [];
   }
 };
+
+// Export user workouts data as CSV
+export const exportWorkoutsToCSV = async (userId) => {
+  if (!db) await initDatabase();
+  try {
+    const workouts = db.getAllSync(
+      'SELECT id, user_id, workout_id, workout_name, duration, comments, session_guid, completed_at FROM user_workouts WHERE user_id = ? ORDER BY completed_at DESC',
+      [userId]
+    );
+
+    if (workouts.length === 0) {
+      return { success: false, message: 'No workout data found to export' };
+    }
+
+    // Create CSV header
+    const headers = ['ID', 'User ID', 'Workout ID', 'Workout Name', 'Duration (minutes)', 'Comments', 'Session ID', 'Completed Date'];
+    
+    // Create CSV rows
+    const csvRows = [headers.join(',')];
+    
+    workouts.forEach(workout => {
+      const row = [
+        workout.id || '',
+        workout.user_id || '',
+        workout.workout_id || '',
+        `"${(workout.workout_name || '').replace(/"/g, '""')}"`, // Escape quotes
+        workout.duration || 0,
+        `"${(workout.comments || '').replace(/"/g, '""')}"`, // Escape quotes
+        workout.session_guid || '',
+        workout.completed_at || ''
+      ];
+      csvRows.push(row.join(','));
+    });
+
+    const csvContent = csvRows.join('\n');
+    
+    return { 
+      success: true, 
+      data: csvContent, 
+      count: workouts.length,
+      filename: `workouts_${userId}_${new Date().toISOString().split('T')[0]}.csv`
+    };
+  } catch (error) {
+    console.error('Error exporting workouts:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Export user profile and measurements data as CSV
+export const exportUserDataToCSV = async (userId) => {
+  if (!db) await initDatabase();
+  try {
+    // Get user profile data
+    const users = db.getAllSync(
+      'SELECT id, username, created_at, last_active, total_workouts, total_exercises, total_sets, tons_lifted, total_workout_minutes, current_streak, longest_streak, is_active FROM users WHERE username = ? OR id = ?',
+      [userId, userId]
+    );
+
+    // Get user measurements
+    const measurements = db.getAllSync(
+      'SELECT id, user_id, weight_lbs, body_fat_percentage, recorded_at FROM user_measurements WHERE user_id = ? ORDER BY recorded_at DESC',
+      [userId]
+    );
+
+    if (users.length === 0) {
+      return { success: false, message: 'No user data found to export' };
+    }
+
+    const csvSections = [];
+
+    // User Profile Section
+    csvSections.push('USER PROFILE DATA');
+    const userHeaders = ['ID', 'Username', 'Created', 'Last Active', 'Total Workouts', 'Total Exercises', 'Total Sets', 'Weight Lifted (tons)', 'Total Minutes', 'Current Streak', 'Longest Streak', 'Active'];
+    csvSections.push(userHeaders.join(','));
+    
+    users.forEach(user => {
+      const row = [
+        user.id || '',
+        `"${(user.username || '').replace(/"/g, '""')}"`,
+        user.created_at || '',
+        user.last_active || '',
+        user.total_workouts || 0,
+        user.total_exercises || 0,
+        user.total_sets || 0,
+        user.tons_lifted || 0,
+        user.total_workout_minutes || 0,
+        user.current_streak || 0,
+        user.longest_streak || 0,
+        user.is_active || 0
+      ];
+      csvSections.push(row.join(','));
+    });
+
+    // Measurements Section
+    if (measurements.length > 0) {
+      csvSections.push(''); // Empty line
+      csvSections.push('MEASUREMENTS DATA');
+      const measurementHeaders = ['ID', 'User ID', 'Weight', 'Body Fat %', 'Recorded Date'];
+      csvSections.push(measurementHeaders.join(','));
+      
+      measurements.forEach(measurement => {
+        const row = [
+          measurement.id || '',
+          measurement.user_id || '',
+          measurement.weight_lbs || '',
+          measurement.body_fat_percentage || '',
+          measurement.recorded_at || ''
+        ];
+        csvSections.push(row.join(','));
+      });
+    }
+
+    const csvContent = csvSections.join('\n');
+    
+    return { 
+      success: true, 
+      data: csvContent, 
+      userCount: users.length,
+      measurementCount: measurements.length,
+      filename: `user_data_${userId}_${new Date().toISOString().split('T')[0]}.csv`
+    };
+  } catch (error) {
+    console.error('Error exporting user data:', error);
+    return { success: false, error: error.message };
+  }
+};
+

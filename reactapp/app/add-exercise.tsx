@@ -3,16 +3,16 @@ import { Picker } from '@react-native-picker/picker';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
@@ -91,7 +91,7 @@ export default function AddExerciseScreen() {
         type: 'error',
         text1: 'Validation Error',
         text2: 'Please fix the errors below',
-        visibilityTime: 3000,
+        visibilityTime: 2000,
       });
       return;
     }
@@ -121,7 +121,7 @@ export default function AddExerciseScreen() {
         type: 'success',
         text1: 'Exercise Created',
         text2: `${formData.name} has been added to your exercises`,
-        visibilityTime: 3000,
+        visibilityTime: 2000,
       });
 
       router.back();
@@ -131,7 +131,7 @@ export default function AddExerciseScreen() {
         type: 'error',
         text1: 'Creation Failed',
         text2: 'Unable to create exercise. Please try again.',
-        visibilityTime: 3000,
+        visibilityTime: 2000,
       });
     } finally {
       setSaving(false);

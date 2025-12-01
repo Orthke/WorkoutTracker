@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomNavigation from '../../components/CustomNavigation';
 import { getWorkoutsFromDB, initDatabase } from '../../utils/database';
 
@@ -31,14 +32,16 @@ export default function WorkoutIndex() {
   }, [router]);
 
   return (
-    <View style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1 }} edges={['top']}>
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#155724" />
         <Text style={styles.loadingText}>Loading workout...</Text>
       </View>
       
-      <CustomNavigation active="workout" />
-    </View>
+      <View style={{ paddingBottom: 34 }}>
+        <CustomNavigation active="workout" />
+      </View>
+    </SafeAreaView>
   );
 }
 

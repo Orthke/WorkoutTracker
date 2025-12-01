@@ -4,7 +4,6 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import CustomNavigation from '../components/CustomNavigation';
 import { deleteCustomExercise, getCurrentUser, getUserCustomExercises } from '../utils/database';
 
 interface Exercise {
@@ -155,7 +154,7 @@ export default function ManageExercisesScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading your exercises...</Text>
@@ -165,7 +164,7 @@ export default function ManageExercisesScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#155724" />
@@ -249,8 +248,6 @@ export default function ManageExercisesScreen() {
           </View>
         </View>
       </Modal>
-
-      <CustomNavigation active="" />
     </SafeAreaView>
   );
 }

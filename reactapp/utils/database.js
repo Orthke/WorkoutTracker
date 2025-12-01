@@ -15,12 +15,17 @@ if (Platform.OS === 'web') {
 // Re-export all functions from the platform-specific implementation
 export const initDatabase = databaseImpl.initDatabase;
 export const getWorkoutsFromDB = databaseImpl.getWorkoutsFromDB;
+export const getArchivedWorkoutsFromDB = databaseImpl.getArchivedWorkoutsFromDB;
 export const getWorkoutWithExercises = databaseImpl.getWorkoutWithExercises;
 export const addWorkoutToDB = databaseImpl.addWorkoutToDB;
 export const addExercisesToWorkout = databaseImpl.addExercisesToWorkout;
 export const getAllExercises = databaseImpl.getAllExercises;
 export const deleteWorkoutFromDB = databaseImpl.deleteWorkoutFromDB;
 export const updateWorkoutInDB = databaseImpl.updateWorkoutInDB;
+export const updateWorkoutOrder = databaseImpl.updateWorkoutOrder;
+export const archiveWorkout = databaseImpl.archiveWorkout;
+export const restoreWorkout = databaseImpl.restoreWorkout;
+export const moveWorkoutToDate = databaseImpl.moveWorkoutToDate;
 export const removeExercisesFromWorkout = databaseImpl.removeExercisesFromWorkout;
 export const getWorkoutCount = databaseImpl.getWorkoutCount;
 export const getLatestWorkout = databaseImpl.getLatestWorkout;
@@ -62,6 +67,7 @@ export const clearAllUserData = databaseImpl.clearAllUserData;
 export const clearUserStats = databaseImpl.clearUserStats;
 export const recalculateUserStatsFromTables = databaseImpl.recalculateUserStatsFromTables;
 export const repairSystemWorkouts = databaseImpl.repairSystemWorkouts;
+export const forceRecreateSystemWorkouts = databaseImpl.forceRecreateSystemWorkouts;
 
 // Custom user exercise functions
 export const getUserCustomExercises = databaseImpl.getUserCustomExercises;
@@ -72,3 +78,7 @@ export const recordUserMeasurement = databaseImpl.recordUserMeasurement;
 export const getUserMeasurementHistory = databaseImpl.getUserMeasurementHistory;
 export const getLatestUserMeasurement = databaseImpl.getLatestUserMeasurement;
 export const deleteUserMeasurement = databaseImpl.deleteUserMeasurement;
+
+// Data Export functions
+export const exportWorkoutsToCSV = databaseImpl.exportWorkoutsToCSV;
+export const exportUserDataToCSV = databaseImpl.exportUserDataToCSV;

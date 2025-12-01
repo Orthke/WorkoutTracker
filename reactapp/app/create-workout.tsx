@@ -41,10 +41,12 @@ interface Exercise {
   estimated_duration?: number;
   press_pull?: string;
   category?: string;
+  bodyweight?: boolean;
 }
 
 interface SelectedExercise extends Exercise {
   order: number;
+  alternates?: Exercise[];  // Array of alternate exercises
 }
 
 export default function CreateWorkout() {
@@ -62,6 +64,11 @@ export default function CreateWorkout() {
   const [exerciseToDelete, setExerciseToDelete] = useState<SelectedExercise | null>(null);
   const [favoriteExercises, setFavoriteExercises] = useState<Set<number>>(new Set());
   const [currentUserId, setCurrentUserId] = useState<string>('default');
+  
+  // Alternates modal state
+  const [alternatesModalVisible, setAlternatesModalVisible] = useState(false);
+  const [currentExerciseForAlternates, setCurrentExerciseForAlternates] = useState<SelectedExercise | null>(null);
+  const [alternateSearchQuery, setAlternateSearchQuery] = useState('');
 
   const muscleGroups = ['all', 'favorites', 'chest', 'arms', 'back', 'legs', 'shoulders', 'core', 'cardio'];
 
@@ -141,47 +148,72 @@ export default function CreateWorkout() {
   }, [searchQuery, selectedMuscleGroup, availableExercises, selectedExercises, favoriteExercises]);
 
   const toggleFavorite = async (exercise: Exercise) => {
+    const isFavorited = favoriteExercises.has(exercise.id);
+    
+    // Optimistic UI update - update state immediately
+    if (isFavorited) {
+      setFavoriteExercises(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(exercise.id);
+        return newSet;
+      });
+      Toast.show({
+        type: 'info',
+        text1: 'Removed from Favorites',
+        text2: `${exercise.name} was removed from favorites`,
+        visibilityTime: 1000,
+      });
+    } else {
+      setFavoriteExercises(prev => new Set(prev).add(exercise.id));
+      Toast.show({
+        type: 'success',
+        text1: 'Exercise Favorited',
+        text2: `${exercise.name} was added to favorites`,
+        visibilityTime: 1000,
+      });
+    }
+    
+    // Async database operation - fire and forget with error handling
     try {
-      const isFavorited = favoriteExercises.has(exercise.id);
-      
       if (isFavorited) {
-        await removeExerciseFromFavorites(exercise.id);
-        setFavoriteExercises(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(exercise.id);
-          return newSet;
-        });
-        Toast.show({
-          type: 'info',
-          text1: 'Removed from Favorites',
-          text2: `${exercise.name} was removed from favorites`,
-          visibilityTime: 2000,
+        removeExerciseFromFavorites(exercise.id).catch(error => {
+          console.error('Error removing from favorites:', error);
+          // Revert UI state if database operation failed
+          setFavoriteExercises(prev => new Set(prev).add(exercise.id));
+          Toast.show({
+            type: 'error',
+            text1: 'Error',
+            text2: 'Failed to update favorites. Reverted.',
+            visibilityTime: 1000,
+          });
         });
       } else {
-        await addExerciseToFavorites(exercise.id);
-        setFavoriteExercises(prev => new Set(prev).add(exercise.id));
-        Toast.show({
-          type: 'success',
-          text1: 'Exercise Favorited',
-          text2: `${exercise.name} was added to favorites`,
-          visibilityTime: 2000,
+        addExerciseToFavorites(exercise.id).catch(error => {
+          console.error('Error adding to favorites:', error);
+          // Revert UI state if database operation failed
+          setFavoriteExercises(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(exercise.id);
+            return newSet;
+          });
+          Toast.show({
+            type: 'error',
+            text1: 'Error',
+            text2: 'Failed to update favorites. Reverted.',
+            visibilityTime: 1000,
+          });
         });
       }
     } catch (error) {
-      console.error('Error toggling favorite:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to update favorite',
-        visibilityTime: 2000,
-      });
+      console.error('Unexpected error in toggleFavorite:', error);
     }
   };
 
   const addExercise = (exercise: Exercise) => {
     const newExercise: SelectedExercise = {
       ...exercise,
-      order: selectedExercises.length
+      order: selectedExercises.length,
+      alternates: []  // Initialize empty alternates array
     };
     setSelectedExercises(prev => [...prev, newExercise]);
     
@@ -190,7 +222,79 @@ export default function CreateWorkout() {
       type: 'success',
       text1: 'Exercise Added!',
       text2: `${exercise.name} was added to your workout`,
-      visibilityTime: 2000,
+      visibilityTime: 1000,
+    });
+  };
+
+  // Functions for managing alternates
+  const openAlternatesModal = (exercise: SelectedExercise) => {
+    setCurrentExerciseForAlternates(exercise);
+    setAlternateSearchQuery('');
+    setAlternatesModalVisible(true);
+  };
+
+  const closeAlternatesModal = () => {
+    setAlternatesModalVisible(false);
+    setCurrentExerciseForAlternates(null);
+    setAlternateSearchQuery('');
+  };
+
+  const addAlternate = (alternateExercise: Exercise) => {
+    if (!currentExerciseForAlternates) return;
+    
+    // Check if alternate already exists
+    const existingAlternates = currentExerciseForAlternates.alternates || [];
+    if (existingAlternates.some(alt => alt.id === alternateExercise.id)) {
+      Toast.show({
+        type: 'info',
+        text1: 'Already Added',
+        text2: `${alternateExercise.name} is already an alternate`,
+        visibilityTime: 1000,
+      });
+      return;
+    }
+    
+    // Don't allow adding the same exercise as alternate to itself
+    if (alternateExercise.id === currentExerciseForAlternates.id) {
+      Toast.show({
+        type: 'info',
+        text1: 'Cannot Add',
+        text2: 'Cannot add exercise as alternate to itself',
+        visibilityTime: 1000,
+      });
+      return;
+    }
+    
+    // Add alternate to the exercise
+    setSelectedExercises(prev => prev.map(ex => 
+      ex.id === currentExerciseForAlternates.id 
+        ? { ...ex, alternates: [...existingAlternates, alternateExercise] }
+        : ex
+    ));
+    
+    // Close modal immediately
+    closeAlternatesModal();
+    
+    Toast.show({
+      type: 'success',
+      text1: 'Alternate Added!',
+      text2: `${alternateExercise.name} added as alternate`,
+      visibilityTime: 1000,
+    });
+  };
+
+  const removeAlternate = (exerciseId: number, alternateId: number) => {
+    setSelectedExercises(prev => prev.map(ex => 
+      ex.id === exerciseId 
+        ? { ...ex, alternates: (ex.alternates || []).filter(alt => alt.id !== alternateId) }
+        : ex
+    ));
+    
+    Toast.show({
+      type: 'info',
+      text1: 'Alternate Removed',
+      text2: 'Alternate exercise was removed',
+      visibilityTime: 1000,
     });
   };
 
@@ -214,7 +318,7 @@ export default function CreateWorkout() {
       type: 'info',
       text1: 'Exercise Removed',
       text2: `${exerciseToDelete.name} was removed from your workout`,
-      visibilityTime: 2000,
+      visibilityTime: 1000,
     });
     
     setDeleteExerciseModalVisible(false);
@@ -265,7 +369,7 @@ export default function CreateWorkout() {
         type: 'success',
         text1: 'Workout Saved!',
         text2: `${workoutName.trim()} was created successfully`,
-        visibilityTime: 3000,
+        visibilityTime: 1000,
       });
       
       router.push('/');
@@ -279,6 +383,8 @@ export default function CreateWorkout() {
   };
 
   const renderSelectedExercise = ({ item, drag, isActive }: RenderItemParams<SelectedExercise>) => {
+    const alternatesCount = (item.alternates || []).length;
+    
     return (
       <View style={[styles.selectedExerciseCard, isActive && styles.selectedExerciseCardActive]}>
         <View style={styles.selectedExerciseContent}>
@@ -293,16 +399,40 @@ export default function CreateWorkout() {
           <View style={styles.selectedExerciseInfo}>
             <Text style={styles.selectedExerciseName}>{item.name}</Text>
             <Text style={styles.selectedExerciseDetails}>
-              {item.base_sets || 3} sets × {item.base_reps || 10} reps
+              {item.base_sets || 3} sets × {item.base_reps || 10} {item.bodyweight ? 'seconds' : 'reps'}
             </Text>
             <Text style={styles.selectedExerciseMuscle}>{item.major_group}</Text>
+            
+            {/* Alternates display */}
+            {alternatesCount > 0 && (
+              <View style={styles.alternatesContainer}>
+                <Text style={styles.alternatesLabel}>
+                  {alternatesCount} alternate{alternatesCount > 1 ? 's' : ''}: 
+                </Text>
+                <Text style={styles.alternatesList}>
+                  {(item.alternates || []).map(alt => alt.name).join(', ')}
+                </Text>
+              </View>
+            )}
           </View>
-          <TouchableOpacity
-            onPress={() => removeExercise(item.id)}
-            style={styles.removeButton}
-          >
-            <Ionicons name="close-circle" size={24} color="#e74c3c" />
-          </TouchableOpacity>
+          
+          <View style={styles.exerciseActions}>
+            {/* Add alternates button */}
+            <TouchableOpacity
+              onPress={() => openAlternatesModal(item)}
+              style={styles.alternatesButton}
+            >
+              <Ionicons name="swap-horizontal" size={18} color="#007AFF" />
+              <Text style={styles.alternatesButtonText}>Alts</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              onPress={() => removeExercise(item.id)}
+              style={styles.removeButton}
+            >
+              <Ionicons name="close-circle" size={24} color="#e74c3c" />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -391,10 +521,10 @@ export default function CreateWorkout() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <GestureHandlerRootView style={styles.flex1}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.push('/')}>
+        <TouchableOpacity onPress={() => router.push('/workout-list')}>
           <Ionicons name="arrow-back" size={24} color="#155724" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Create Workout</Text>
@@ -412,7 +542,7 @@ export default function CreateWorkout() {
       </View>
 
       {/* Workout Name Input - moved outside renderHeader to prevent keyboard dismissal */}
-      <View style={styles.section}>
+      <View style={styles.nameSection}>
         <Text style={styles.sectionTitle}>Workout Name</Text>
         <TextInput
           style={styles.nameInput}
@@ -425,20 +555,22 @@ export default function CreateWorkout() {
         />
       </View>
 
-      <DraggableFlatList
-        data={selectedExercises}
-        onDragEnd={onDragEnd}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={renderSelectedExercise}
-        ListHeaderComponent={renderHeader}
-        ListFooterComponent={renderFooter}
-        contentContainerStyle={styles.content}
-        autoscrollThreshold={80}
-        autoscrollSpeed={200}
-        activationDistance={0}
-        dragHitSlop={{ top: 0, bottom: 0, left: 0, right: 0 }}
-        showsVerticalScrollIndicator={false}
-      />
+      <View style={styles.flex1}>
+        <DraggableFlatList
+          data={selectedExercises}
+          onDragEnd={onDragEnd}
+          keyExtractor={(item) => item.id.toString()}
+          renderItem={renderSelectedExercise}
+          ListHeaderComponent={renderHeader}
+          ListFooterComponent={renderFooter}
+          contentContainerStyle={styles.content}
+          autoscrollThreshold={80}
+          autoscrollSpeed={200}
+          activationDistance={0}
+          dragHitSlop={{ top: 0, bottom: 0, left: 0, right: 0 }}
+          showsVerticalScrollIndicator={false}
+        />
+      </View>
 
       {/* Exercise Selection Modal */}
       <Modal
@@ -541,6 +673,107 @@ export default function CreateWorkout() {
           </View>
         </View>
       </Modal>
+      
+      {/* Exercise Alternates Modal */}
+      <Modal
+        visible={alternatesModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              Alternates for {currentExerciseForAlternates?.name}
+            </Text>
+            <TouchableOpacity onPress={closeAlternatesModal}>
+              <Ionicons name="close" size={24} color="#666" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Current alternates list */}
+          {currentExerciseForAlternates && (currentExerciseForAlternates.alternates || []).length > 0 && (
+            <View style={styles.currentAlternatesSection}>
+              <Text style={styles.currentAlternatesTitle}>Current Alternates:</Text>
+              {(currentExerciseForAlternates.alternates || []).map(alternate => (
+                <View key={alternate.id} style={styles.currentAlternateCard}>
+                  <View style={styles.currentAlternateInfo}>
+                    <Text style={styles.currentAlternateName}>{alternate.name}</Text>
+                    <Text style={styles.currentAlternateDetails}>{alternate.major_group}</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => removeAlternate(currentExerciseForAlternates.id, alternate.id)}
+                    style={styles.removeAlternateButton}
+                  >
+                    <Ionicons name="close-circle" size={20} color="#e74c3c" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Search for new alternates */}
+          <View style={styles.filterSection}>
+            <TextInput
+              style={styles.searchInput}
+              value={alternateSearchQuery}
+              onChangeText={setAlternateSearchQuery}
+              placeholder="Search for alternate exercises..."
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+          </View>
+
+          <ScrollView style={styles.exercisesList}>
+            {availableExercises
+              .filter(exercise => {
+                // Filter out the current exercise and existing alternates
+                const isCurrentExercise = exercise.id === currentExerciseForAlternates?.id;
+                const isAlreadyAlternate = (currentExerciseForAlternates?.alternates || []).some(alt => alt.id === exercise.id);
+                const isAlreadySelected = selectedExercises.some(selected => selected.id === exercise.id && selected.id !== currentExerciseForAlternates?.id);
+                
+                // Filter by search query
+                const matchesSearch = !alternateSearchQuery ||
+                  exercise.name.toLowerCase().includes(alternateSearchQuery.toLowerCase()) ||
+                  exercise.description?.toLowerCase().includes(alternateSearchQuery.toLowerCase()) ||
+                  exercise.major_group.toLowerCase().includes(alternateSearchQuery.toLowerCase());
+                
+                return !isCurrentExercise && !isAlreadyAlternate && !isAlreadySelected && matchesSearch;
+              })
+              .slice(0, 50)
+              .map(exercise => {
+                const isFavorited = favoriteExercises.has(exercise.id);
+                
+                return (
+                  <View key={exercise.id} style={styles.exerciseCard}>
+                    <TouchableOpacity
+                      style={styles.exerciseInfo}
+                      onPress={() => addAlternate(exercise)}
+                    >
+                      <Text style={styles.exerciseName}>{exercise.name}</Text>
+                      <Text style={styles.exerciseDescription}>{exercise.description}</Text>
+                      <Text style={styles.exerciseMuscle}>{exercise.major_group}</Text>
+                    </TouchableOpacity>
+                    <View style={styles.exerciseActions}>
+                      <TouchableOpacity
+                        onPress={() => toggleFavorite(exercise)}
+                        style={styles.favoriteButton}
+                      >
+                        <Ionicons 
+                          name={isFavorited ? "star" : "star-outline"} 
+                          size={20} 
+                          color={isFavorited ? "#FFD700" : "#ccc"} 
+                        />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => addAlternate(exercise)}>
+                        <Ionicons name="add-circle" size={24} color="#155724" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
       </GestureHandlerRootView>
     </SafeAreaView>
   );
@@ -594,10 +827,19 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 34, // Extra padding for safe area
+  },
+  nameSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
   section: {
     marginBottom: 24,
+    paddingHorizontal: 16,
   },
   sectionTitle: {
     fontSize: 18,
@@ -901,5 +1143,80 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#fff',
     fontWeight: '600',
+  },
+  // Alternates styles
+  alternatesContainer: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  alternatesLabel: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  alternatesList: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    lineHeight: 16,
+  },
+  alternatesButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f8ff',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    marginRight: 8,
+  },
+  alternatesButtonText: {
+    fontSize: 11,
+    color: '#007AFF',
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  currentAlternatesSection: {
+    backgroundColor: '#f8f9fa',
+    margin: 16,
+    padding: 16,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#007AFF',
+  },
+  currentAlternatesTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  currentAlternateCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 6,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  currentAlternateInfo: {
+    flex: 1,
+  },
+  currentAlternateName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  currentAlternateDetails: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+  removeAlternateButton: {
+    padding: 4,
   },
 });

@@ -67,22 +67,17 @@ export default function WorkoutSummaryPage() {
         // Get exercise completions for this specific workout
         // First, try to get exercises by workout session ID if available
         const userExercises = await getUserExerciseHistory(userId, 1000);
-        console.log('Workout Summary: Raw user exercises:', userExercises);
-        console.log('Workout Summary: Looking for workout ID:', workoutRecord.workout_id);
         
         let workoutExercises: ExerciseCompletion[] = [];
         
         // Try to find exercises with exact workout_session_id match using the workout's session GUID
         if (workoutRecord.session_guid) {
           const guidBasedExercises = userExercises.filter((exercise: ExerciseCompletion) => {
-            console.log('Workout Summary: Checking exercise session ID:', exercise.workout_session_id);
-            console.log('Workout Summary: Looking for session GUID:', workoutRecord.session_guid);
             return exercise.workout_session_id === workoutRecord.session_guid;
           });
           
           if (guidBasedExercises.length > 0) {
             workoutExercises = guidBasedExercises;
-            console.log('Workout Summary: Found exercises by GUID match:', guidBasedExercises.length);
           }
         }
         
@@ -99,7 +94,6 @@ export default function WorkoutSummaryPage() {
           
           if (timeBasedExercises.length > 0) {
             workoutExercises = timeBasedExercises;
-            console.log('Workout Summary: Found exercises by time-based filtering:', timeBasedExercises.length);
           } else {
             // Final fallback to date-based matching
             const workoutDate = workoutRecord.completed_at.split(/[T\s]/)[0];
@@ -107,7 +101,6 @@ export default function WorkoutSummaryPage() {
               const exerciseDate = exercise.completed_at.split(/[T\s]/)[0];
               return exerciseDate === workoutDate;
             });
-            console.log('Workout Summary: Found exercises by date matching:', workoutExercises.length);
           }
         }
 
@@ -220,15 +213,6 @@ export default function WorkoutSummaryPage() {
     
     if (!difficultiesArray || difficultiesArray.length === 0) return 'No effort recorded';
     
-    const difficultyMap: { [key: string]: string } = {
-      'easy': 'Easy',
-      'medium': 'Medium', 
-      'hard': 'Hard',
-      '3': 'Easy',
-      '6': 'Medium',
-      '9': 'Hard'
-    };
-    
     // Filter out null/undefined values and convert to string
     const validDifficulties = difficultiesArray
       .filter(d => d !== null && d !== undefined)
@@ -237,11 +221,9 @@ export default function WorkoutSummaryPage() {
     if (validDifficulties.length === 0) return 'No effort recorded';
     
     const uniqueDifficulties = [...new Set(validDifficulties)];
-    const mappedDifficulties = uniqueDifficulties
-      .map(d => difficultyMap[d] || d)
-      .filter(d => d !== 'null' && d !== 'undefined');
-      
-    return mappedDifficulties.length > 0 ? mappedDifficulties.join(', ') : 'No effort recorded';
+    
+    // Return just the numbers, no mapping to words to prevent text clipping
+    return uniqueDifficulties.length > 0 ? uniqueDifficulties.join(', ') : 'No effort recorded';
   };
 
   if (loading) {
@@ -270,7 +252,7 @@ export default function WorkoutSummaryPage() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1 }} edges={['top']}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
@@ -304,7 +286,11 @@ export default function WorkoutSummaryPage() {
         </View>
 
         {/* Exercises */}
-        <ScrollView style={styles.exercisesList} showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          style={styles.exercisesList} 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.exercisesListContent}
+        >
           {workoutSummary.exercises.map((exercise, index) => (
             <View key={exercise.id} style={styles.exerciseCard}>
               <View style={styles.exerciseHeader}>
@@ -336,7 +322,7 @@ export default function WorkoutSummaryPage() {
                 <View style={styles.statRow}>
                   <View style={styles.statItem}>
                     <Ionicons name="repeat-outline" size={16} color="#155724" />
-                    <Text style={styles.statLabel}>{exercise.bodyweight ? 'Duration' : 'Reps'}</Text>
+                    <Text style={styles.statLabel}>{exercise.bodyweight ? 'Seconds' : 'Reps'}</Text>
                     <Text style={styles.statValue}>{formatReps(exercise.reps_per_set, exercise.bodyweight)}</Text>
                   </View>
                   
@@ -450,6 +436,9 @@ const styles = StyleSheet.create({
   exercisesList: {
     flex: 1,
     paddingHorizontal: 16,
+  },
+  exercisesListContent: {
+    paddingBottom: 100, // Extra space for safe area and system buttons
   },
   exerciseCard: {
     backgroundColor: '#fff',

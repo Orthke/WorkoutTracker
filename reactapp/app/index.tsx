@@ -84,7 +84,7 @@ export default function Index() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1 }} edges={['top']}>
       <View style={styles.container}>
         <View style={styles.welcomeSection}>
           <Ionicons name="fitness-outline" size={80} color="#155724" />
@@ -119,20 +119,20 @@ export default function Index() {
             <View style={styles.quickLinksContainer}>
               <TouchableOpacity 
                 style={styles.quickLinkButton}
-                onPress={() => router.push('/calendar')}
-              >
-                <Ionicons name="calendar-outline" size={32} color="#155724" />
-                <Text style={styles.quickLinkText}>Calendar</Text>
-                <Text style={styles.quickLinkSubtext}>View workout history</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.quickLinkButton}
                 onPress={() => router.push('/profile')}
               >
                 <Ionicons name="person-outline" size={32} color="#155724" />
                 <Text style={styles.quickLinkText}>Profile</Text>
                 <Text style={styles.quickLinkSubtext}>Manage settings</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.quickLinkButton}
+                onPress={() => router.push('/calendar')}
+              >
+                <Ionicons name="calendar-outline" size={32} color="#155724" />
+                <Text style={styles.quickLinkText}>Calendar</Text>
+                <Text style={styles.quickLinkSubtext}>View workout history</Text>
               </TouchableOpacity>
             </View>
           </View>

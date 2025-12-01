@@ -19,9 +19,9 @@ export const initDatabase = async () => {
     if (!existingWorkouts) {
       // Create sample workouts data
       const sampleWorkouts = [
-        { id: 1, name: 'Push Power', num_exercises: 3, duration: 32, user: 'kelton', order: 1, major_group: 'chest, arms' },
-        { id: 2, name: 'Leg Day Builder', num_exercises: 3, duration: 30, user: 'kelton', order: 2, major_group: 'legs' },
-        { id: 3, name: 'Back and Biceps', num_exercises: 3, duration: 28, user: 'kelton', order: 3, major_group: 'back, arms' }
+        { id: 1, name: 'Strength Training', num_exercises: 4, duration: 35, user: 'kelton', order: 1, major_group: 'full-body' },
+        { id: 2, name: 'Lower Body', num_exercises: 4, duration: 30, user: 'kelton', order: 2, major_group: 'legs' },
+        { id: 3, name: 'Upper Body', num_exercises: 4, duration: 28, user: 'kelton', order: 3, major_group: 'upper' }
       ];
       
       await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(sampleWorkouts));
@@ -151,9 +151,9 @@ export const repairSystemWorkouts = async () => {
     if (systemWorkouts.length === 0) {
       console.log('  - No system workouts found, creating them...');
       const defaultSystemWorkouts = [
-        { id: 1, name: 'Push Power', num_exercises: 3, duration: 32, user: 'system', order: 1, major_group: 'chest, arms' },
-        { id: 2, name: 'Leg Day Builder', num_exercises: 3, duration: 30, user: 'system', order: 2, major_group: 'legs' },
-        { id: 3, name: 'Back and Biceps', num_exercises: 3, duration: 28, user: 'system', order: 3, major_group: 'back, arms' }
+        { id: 1, name: 'Strength Training', num_exercises: 4, duration: 35, user: 'system', order: 1, major_group: 'full-body' },
+        { id: 2, name: 'Lower Body', num_exercises: 4, duration: 30, user: 'system', order: 2, major_group: 'legs' },
+        { id: 3, name: 'Upper Body', num_exercises: 4, duration: 28, user: 'system', order: 3, major_group: 'upper' }
       ];
       const updatedWorkouts = [...workouts, ...defaultSystemWorkouts];
       await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(updatedWorkouts));
@@ -174,7 +174,10 @@ export const getWorkoutsFromDB = async () => {
   try {
     const data = await AsyncStorage.getItem(WORKOUTS_KEY);
     if (data) {
-      return JSON.parse(data).sort((a, b) => a.order - b.order);
+      const workouts = JSON.parse(data);
+      return workouts
+        .filter(workout => workout.archived !== 1)
+        .sort((a, b) => a.order - b.order);
     }
     return [];
   } catch (error) {
@@ -204,7 +207,10 @@ export const getWorkoutWithExercises = async (workoutId) => {
     if (workoutExercisesData) {
       // Use stored exercise relationships for custom workouts
       const storedExercises = JSON.parse(workoutExercisesData);
-      workoutExercises = storedExercises.map(item => item.exercise).sort((a, b) => {
+      workoutExercises = storedExercises.map(item => ({
+        ...item.exercise,
+        alternates: item.alternates || []
+      })).sort((a, b) => {
         const aOrder = storedExercises.find(se => se.exercise_id === a.id)?.exercise_order || 0;
         const bOrder = storedExercises.find(se => se.exercise_id === b.id)?.exercise_order || 0;
         return aOrder - bOrder;
@@ -216,12 +222,12 @@ export const getWorkoutWithExercises = async (workoutId) => {
       
       const exercises = JSON.parse(exercisesData);
       
-      if (workout.name === 'Push Power') {
-        workoutExercises = exercises.filter(e => ['Incline Bench Press', 'Bench Press', 'Tricep Extension'].includes(e.name));
-      } else if (workout.name === 'Leg Day Builder') {
-        workoutExercises = exercises.filter(e => ['Front Squat', 'Leg Press', 'Calf Raise'].includes(e.name));
-      } else if (workout.name === 'Back and Biceps') {
-        workoutExercises = exercises.filter(e => ['Pullup', 'Seated Cable Row', 'Bicep Curl'].includes(e.name));
+      if (workout.name === 'Strength Training') {
+        workoutExercises = exercises.filter(e => ['Squat', 'Bench Press', 'Barbell Row', 'Overhead Press'].includes(e.name));
+      } else if (workout.name === 'Lower Body') {
+        workoutExercises = exercises.filter(e => ['Squat', 'Romanian Deadlift', 'Leg Press', 'Calf Raise'].includes(e.name));
+      } else if (workout.name === 'Upper Body') {
+        workoutExercises = exercises.filter(e => ['Bench Press', 'Pullup', 'Overhead Press', 'Barbell Row'].includes(e.name));
       }
     }
     
@@ -270,7 +276,8 @@ export const addExercisesToWorkout = async (workoutId, exercises) => {
       workout_id: workoutId,
       exercise_id: exercise.id,
       exercise_order: index,
-      exercise: exercise // Store the full exercise data for easy access
+      exercise: exercise, // Store the full exercise data for easy access
+      alternates: exercise.alternates || [] // Store alternates
     }));
     
     await AsyncStorage.setItem(WORKOUT_EXERCISES_KEY, JSON.stringify(exerciseData));
@@ -723,9 +730,9 @@ export const clearAndRegenerateExercises = async () => {
       
       // Add system workouts
       const systemWorkouts = CREATE_DEFAULT_WORKOUTS_DATA || [
-        { id: 1, name: 'Push Power', num_exercises: 3, duration: 32, user: 'system', order: 1, major_group: 'chest, arms' },
-        { id: 2, name: 'Leg Day Builder', num_exercises: 3, duration: 30, user: 'system', order: 2, major_group: 'legs' },
-        { id: 3, name: 'Back and Biceps', num_exercises: 3, duration: 28, user: 'system', order: 3, major_group: 'back, arms' }
+        { id: 1, name: 'Strength Training', num_exercises: 4, duration: 35, user: 'system', order: 1, major_group: 'full-body' },
+        { id: 2, name: 'Lower Body', num_exercises: 4, duration: 30, user: 'system', order: 2, major_group: 'legs' },
+        { id: 3, name: 'Upper Body', num_exercises: 4, duration: 28, user: 'system', order: 3, major_group: 'upper' }
       ];
       
       const updatedWorkouts = [...workouts, ...systemWorkouts];
@@ -1895,9 +1902,9 @@ export const clearAllUserData = async () => {
     if (systemWorkoutCount === 0) {
       console.log('  - Recreating system workouts...');
       const systemWorkouts = [
-        { id: 1, name: 'Push Power', num_exercises: 3, duration: 32, user: 'system', order: 1, major_group: 'chest, arms' },
-        { id: 2, name: 'Leg Day Builder', num_exercises: 3, duration: 30, user: 'system', order: 2, major_group: 'legs' },
-        { id: 3, name: 'Back and Biceps', num_exercises: 3, duration: 28, user: 'system', order: 3, major_group: 'back, arms' }
+        { id: 1, name: 'Strength Training', num_exercises: 4, duration: 35, user: 'system', order: 1, major_group: 'full-body' },
+        { id: 2, name: 'Lower Body', num_exercises: 4, duration: 30, user: 'system', order: 2, major_group: 'legs' },
+        { id: 3, name: 'Upper Body', num_exercises: 4, duration: 28, user: 'system', order: 3, major_group: 'upper' }
       ];
       await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(systemWorkouts));
       console.log('✅ System workouts recreated');
@@ -1994,5 +2001,249 @@ export const deleteUserMeasurement = async (userId, measurementId) => {
   } catch (error) {
     console.error('Error deleting measurement:', error);
     throw error;
+  }
+};
+
+// Get archived workouts
+export const getArchivedWorkoutsFromDB = async () => {
+  try {
+    const workoutsData = await AsyncStorage.getItem(WORKOUTS_KEY);
+    if (!workoutsData) return [];
+    
+    const workouts = JSON.parse(workoutsData);
+    return workouts.filter(workout => workout.archived === 1);
+  } catch (error) {
+    console.error('Error fetching archived workouts:', error);
+    return [];
+  }
+};
+
+// Update workout order
+export const updateWorkoutOrder = async (workoutId, newOrder) => {
+  try {
+    const workoutsData = await AsyncStorage.getItem(WORKOUTS_KEY);
+    if (!workoutsData) return;
+    
+    const workouts = JSON.parse(workoutsData);
+    const updatedWorkouts = workouts.map(workout =>
+      workout.id === workoutId ? { ...workout, order: newOrder } : workout
+    );
+    
+    await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(updatedWorkouts));
+    console.log(`Workout ${workoutId} order updated to ${newOrder}`);
+  } catch (error) {
+    console.error('Error updating workout order:', error);
+    throw error;
+  }
+};
+
+// Archive workout
+export const archiveWorkout = async (workoutId) => {
+  try {
+    const workoutsData = await AsyncStorage.getItem(WORKOUTS_KEY);
+    if (!workoutsData) return;
+    
+    const workouts = JSON.parse(workoutsData);
+    const updatedWorkouts = workouts.map(workout =>
+      workout.id === workoutId ? { ...workout, archived: 1 } : workout
+    );
+    
+    await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(updatedWorkouts));
+    console.log(`Workout ${workoutId} archived`);
+  } catch (error) {
+    console.error('Error archiving workout:', error);
+    throw error;
+  }
+};
+
+// Restore archived workout
+export const restoreWorkout = async (workoutId) => {
+  try {
+    const workoutsData = await AsyncStorage.getItem(WORKOUTS_KEY);
+    if (!workoutsData) return;
+    
+    const workouts = JSON.parse(workoutsData);
+    const updatedWorkouts = workouts.map(workout =>
+      workout.id === workoutId ? { ...workout, archived: 0 } : workout
+    );
+    
+    await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(updatedWorkouts));
+    console.log(`Workout ${workoutId} restored`);
+  } catch (error) {
+    console.error('Error restoring workout:', error);
+    throw error;
+  }
+};
+
+// Move workout to different date
+export const moveWorkoutToDate = async (workoutRecordId, newDate) => {
+  try {
+    const workoutHistory = await AsyncStorage.getItem(USER_WORKOUTS_KEY);
+    if (!workoutHistory) return;
+    
+    const workouts = JSON.parse(workoutHistory);
+    const updatedWorkouts = workouts.map(workout =>
+      workout.id === workoutRecordId ? { ...workout, completed_at: newDate } : workout
+    );
+    
+    await AsyncStorage.setItem(USER_WORKOUTS_KEY, JSON.stringify(updatedWorkouts));
+    console.log(`Workout ${workoutRecordId} moved to ${newDate}`);
+  } catch (error) {
+    console.error('Error moving workout to new date:', error);
+    throw error;
+  }
+};
+
+// Force recreate system workouts (for repair)
+export const forceRecreateSystemWorkouts = async () => {
+  try {
+    // Remove existing system workouts
+    const workoutsData = await AsyncStorage.getItem(WORKOUTS_KEY);
+    let workouts = workoutsData ? JSON.parse(workoutsData) : [];
+    
+    // Filter out system workouts
+    workouts = workouts.filter(workout => workout.user !== 'system');
+    
+    // Add fresh system workouts
+    const systemWorkouts = [
+      { id: Date.now() + 1, name: 'Full Body A (Push/Squat)', num_exercises: 5, duration: 30, user: 'system', order: 1, major_group: 'full-body', archived: 0 },
+      { id: Date.now() + 2, name: 'Full Body B (Pull/Hinge)', num_exercises: 5, duration: 30, user: 'system', order: 2, major_group: 'full-body', archived: 0 },
+      { id: Date.now() + 3, name: 'Lower Body Strength', num_exercises: 5, duration: 32, user: 'system', order: 3, major_group: 'legs', archived: 0 },
+      { id: Date.now() + 4, name: 'Upper Body Push', num_exercises: 5, duration: 28, user: 'system', order: 4, major_group: 'upper-push', archived: 0 },
+      { id: Date.now() + 5, name: 'Upper Body Pull', num_exercises: 5, duration: 28, user: 'system', order: 5, major_group: 'upper-pull', archived: 0 },
+      { id: Date.now() + 6, name: 'Core & Conditioning', num_exercises: 5, duration: 25, user: 'system', order: 6, major_group: 'core', archived: 0 }
+    ];
+    
+    workouts = [...workouts, ...systemWorkouts];
+    await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(workouts));
+    
+    console.log('System workouts recreated successfully');
+    return { success: true, message: 'System workouts recreated successfully' };
+  } catch (error) {
+    console.error('Error recreating system workouts:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Export user workouts data as CSV
+export const exportWorkoutsToCSV = async (userId) => {
+  try {
+    const userWorkoutsData = await AsyncStorage.getItem(USER_WORKOUTS_KEY);
+    const userWorkouts = userWorkoutsData ? JSON.parse(userWorkoutsData) : [];
+    
+    // Filter workouts for the specific user
+    const workouts = userWorkouts.filter(workout => workout.user_id === userId);
+
+    if (workouts.length === 0) {
+      return { success: false, message: 'No workout data found to export' };
+    }
+
+    // Create CSV header
+    const headers = ['ID', 'User ID', 'Workout ID', 'Workout Name', 'Duration (minutes)', 'Comments', 'Session ID', 'Completed Date'];
+    
+    // Create CSV rows
+    const csvRows = [headers.join(',')];
+    
+    workouts.forEach(workout => {
+      const row = [
+        workout.id || '',
+        workout.user_id || '',
+        workout.workout_id || '',
+        `"${(workout.workout_name || '').replace(/"/g, '""')}"`, // Escape quotes
+        workout.duration || 0,
+        `"${(workout.comments || '').replace(/"/g, '""')}"`, // Escape quotes
+        workout.session_guid || '',
+        workout.completed_at || ''
+      ];
+      csvRows.push(row.join(','));
+    });
+
+    const csvContent = csvRows.join('\n');
+    
+    return { 
+      success: true, 
+      data: csvContent, 
+      count: workouts.length,
+      filename: `workouts_${userId}_${new Date().toISOString().split('T')[0]}.csv`
+    };
+  } catch (error) {
+    console.error('Error exporting workouts:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Export user profile and measurements data as CSV
+export const exportUserDataToCSV = async (userId) => {
+  try {
+    // Get user profile data
+    const usersData = await AsyncStorage.getItem(USERS_KEY);
+    const users = usersData ? JSON.parse(usersData) : [];
+    const userProfile = users.filter(user => user.username === userId || user.id === userId);
+
+    // Get user measurements
+    const measurementsData = await AsyncStorage.getItem('user_measurements');
+    const measurements = measurementsData ? JSON.parse(measurementsData) : [];
+    const userMeasurements = measurements.filter(measurement => measurement.user_id === userId);
+
+    if (userProfile.length === 0) {
+      return { success: false, message: 'No user data found to export' };
+    }
+
+    const csvSections = [];
+
+    // User Profile Section
+    csvSections.push('USER PROFILE DATA');
+    const userHeaders = ['ID', 'Username', 'Created', 'Last Active', 'Total Workouts', 'Total Exercises', 'Total Sets', 'Weight Lifted (tons)', 'Total Minutes', 'Current Streak', 'Longest Streak', 'Active'];
+    csvSections.push(userHeaders.join(','));
+    
+    userProfile.forEach(user => {
+      const row = [
+        user.id || '',
+        `"${(user.username || '').replace(/"/g, '""')}"`,
+        user.created_at || '',
+        user.last_active || '',
+        user.total_workouts || 0,
+        user.total_exercises || 0,
+        user.total_sets || 0,
+        user.tons_lifted || 0,
+        user.total_workout_minutes || 0,
+        user.current_streak || 0,
+        user.longest_streak || 0,
+        user.is_active || 0
+      ];
+      csvSections.push(row.join(','));
+    });
+
+    // Measurements Section
+    if (userMeasurements.length > 0) {
+      csvSections.push(''); // Empty line
+      csvSections.push('MEASUREMENTS DATA');
+      const measurementHeaders = ['ID', 'User ID', 'Weight', 'Body Fat %', 'Recorded Date'];
+      csvSections.push(measurementHeaders.join(','));
+      
+      userMeasurements.forEach(measurement => {
+        const row = [
+          measurement.id || '',
+          measurement.user_id || '',
+          measurement.weight || '',
+          measurement.body_fat_percentage || '',
+          measurement.recorded_at || ''
+        ];
+        csvSections.push(row.join(','));
+      });
+    }
+
+    const csvContent = csvSections.join('\n');
+    
+    return { 
+      success: true, 
+      data: csvContent, 
+      userCount: userProfile.length,
+      measurementCount: userMeasurements.length,
+      filename: `user_data_${userId}_${new Date().toISOString().split('T')[0]}.csv`
+    };
+  } catch (error) {
+    console.error('Error exporting user data:', error);
+    return { success: false, error: error.message };
   }
 };

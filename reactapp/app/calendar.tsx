@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Calendar, DateData } from 'react-native-calendars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomNavigation from '../components/CustomNavigation';
-import { deleteUserMeasurement, deleteWorkoutBySessionGuid, deleteWorkoutCompletion, getCurrentUser, getUserMeasurementHistory, getUserWorkoutHistory, getWorkoutsFromDB, recordCompletedWorkout, recordUserMeasurement } from '../utils/database';
+import { deleteUserMeasurement, deleteWorkoutBySessionGuid, deleteWorkoutCompletion, getCurrentUser, getUserMeasurementHistory, getUserWorkoutHistory, getWorkoutsFromDB, moveWorkoutToDate, recordCompletedWorkout, recordUserMeasurement } from '../utils/database';
 
 interface WorkoutRecord {
   id: number;
@@ -48,6 +49,11 @@ export default function CalendarPage() {
   const [selectedBodyFat, setSelectedBodyFat] = useState('15');
   const [includeBodyFat, setIncludeBodyFat] = useState(true);
   const [savingMeasurement, setSavingMeasurement] = useState(false);
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [workoutToMove, setWorkoutToMove] = useState<WorkoutRecord | null>(null);
+  const [moveToDate, setMoveToDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [showDeleteMeasurementModal, setShowDeleteMeasurementModal] = useState(false);
   const [measurementToDelete, setMeasurementToDelete] = useState<MeasurementRecord | null>(null);
   const [deletingMeasurement, setDeletingMeasurement] = useState(false);
@@ -66,11 +72,11 @@ export default function CalendarPage() {
       
       if (user) {
         const userId = (user?.username || user?.id || 'default').toString();
-        console.log('Calendar: Loading data for user:', { username: user?.username, id: user?.id, finalUserId: userId });
+        //console.log('Calendar: Loading data for user:', { username: user?.username, id: user?.id, finalUserId: userId });
         const history = await getUserWorkoutHistory(userId, 365); // Get last year's workouts
         const measurements = await getUserMeasurementHistory(userId, 365); // Get last year's measurements
-        console.log('Calendar: Loaded workout history:', history);
-        console.log('Calendar: Loaded measurements:', measurements);
+        //console.log('Calendar: Loaded workout history:', history);
+        //console.log('Calendar: Loaded measurements:', measurements);
         setWorkoutHistory(history);
         
         // Load available workouts for manual addition
@@ -91,7 +97,7 @@ export default function CalendarPage() {
             date = completedAt.split(' ')[0]; // Extract YYYY-MM-DD from space-separated format
           }
           
-          console.log('Calendar: Processing workout date:', { original: completedAt, extracted: date });
+          //console.log('Calendar: Processing workout date:', { original: completedAt, extracted: date });
           
           if (!markedDates[date]) {
             markedDates[date] = {
@@ -147,11 +153,11 @@ export default function CalendarPage() {
           }
         });
         
-        console.log('Calendar: Created marked dates:', Object.keys(markedDates).length, 'days');
-        console.log('Calendar: Sample marked dates:', Object.keys(markedDates).slice(0, 3).map(date => ({
-          date,
-          data: markedDates[date]
-        })));
+        //console.log('Calendar: Created marked dates:', Object.keys(markedDates).length, 'days');
+        // console.log('Calendar: Sample marked dates:', Object.keys(markedDates).slice(0, 3).map(date => ({
+        //   date,
+        //   data: markedDates[date]
+        // })));
         setWorkoutDates(markedDates);
         
         // If there's a selected date, update the selected date workouts and measurements
@@ -285,14 +291,12 @@ export default function CalendarPage() {
       console.log('Calendar: Saving measurement for date:', selectedDate);
       
       // Create date string in ISO format for the selected date
-      const measurementDate = new Date(selectedDate).toISOString();
-      
       // Save measurement with the selected date
       await recordUserMeasurement(
         userId,
         parseFloat(selectedWeight),
         includeBodyFat ? parseFloat(selectedBodyFat) : null,
-        measurementDate
+        null
       );
       
       // Reset form
@@ -325,6 +329,49 @@ export default function CalendarPage() {
     setShowDeleteModal(true);
   };
 
+  const handleMoveWorkout = (workout: WorkoutRecord) => {
+    setWorkoutToMove(workout);
+    setMoveToDate(new Date(workout.completed_at));
+    setShowMoveModal(true);
+  };
+
+  const confirmMoveWorkout = async () => {
+    if (!workoutToMove) return;
+    
+    try {
+      setMoving(true);
+      
+      // Format the date to ISO string for database
+      const newDateString = moveToDate.toISOString();
+      
+      await moveWorkoutToDate(workoutToMove.id, newDateString);
+      
+      // Refresh the calendar data
+      await loadWorkoutHistory();
+      
+      setShowMoveModal(false);
+      setWorkoutToMove(null);
+      
+      // Clear selected date if needed and refresh it to show changes immediately
+      if (selectedDate) {
+        // Reload the selected date to show updated data
+        onDayPress({ dateString: selectedDate } as DateData);
+      }
+    } catch (error) {
+      console.error('Error moving workout:', error);
+      alert('Failed to move workout. Please try again.');
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const handleDatePickerChange = (event: any, selectedDate?: Date) => {
+    setShowDatePicker(false);
+    if (selectedDate) {
+      setMoveToDate(selectedDate);
+    }
+  };
+
   const confirmDeleteWorkout = async () => {
     if (!workoutToDelete) return;
     
@@ -352,7 +399,7 @@ export default function CalendarPage() {
         setShowDeleteModal(false);
         
         console.log(`Deleted workout: ${workoutToDelete.workout_name}`);
-        console.log(`Deleted ${result.exerciseRowsAffected || 0} exercise completions and ${result.workoutRowsAffected || 0} workout records`);
+        console.log(`Deleted workout records for session: ${workoutToDelete.session_guid || 'unknown'}`);
       }
     } catch (error) {
       console.error('Error deleting workout:', error);
@@ -381,7 +428,7 @@ export default function CalendarPage() {
       
       const result = await deleteUserMeasurement(userId, measurementToDelete.id);
       
-      if (result.success) {
+      if (typeof result === 'object' && result && 'success' in result && result.success) {
         // Reload data to reflect the deletion
         await loadWorkoutHistory();
         
@@ -407,7 +454,7 @@ export default function CalendarPage() {
 
   if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1 }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={[styles.container, styles.centerContainer]}>
           <ActivityIndicator size="large" color="#155724" />
           <Text style={styles.loadingText}>Loading workout history...</Text>
@@ -418,7 +465,8 @@ export default function CalendarPage() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
@@ -517,15 +565,26 @@ export default function CalendarPage() {
                         </Text>
                         <Ionicons name="chevron-forward-outline" size={16} color="#666" style={styles.workoutChevron} />
                       </View>
-                      <TouchableOpacity
-                        style={styles.deleteWorkoutButton}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          handleDeleteWorkout(workout);
-                        }}
-                      >
-                        <Ionicons name="trash-outline" size={16} color="#dc3545" />
-                      </TouchableOpacity>
+                      <View style={styles.workoutActions}>
+                        <TouchableOpacity
+                          style={styles.moveWorkoutButton}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleMoveWorkout(workout);
+                          }}
+                        >
+                          <Ionicons name="calendar-outline" size={16} color="#007bff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.deleteWorkoutButton}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleDeleteWorkout(workout);
+                          }}
+                        >
+                          <Ionicons name="trash-outline" size={16} color="#dc3545" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                     {workout.comments && (
                       <Text style={styles.workoutComments}>{workout.comments}</Text>
@@ -597,14 +656,81 @@ export default function CalendarPage() {
       </ScrollView>
       
       <CustomNavigation active="calendar" />
+    </SafeAreaView>
 
-      {/* Workout Selection Modal */}
-      <Modal
-        visible={showAddWorkoutModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowAddWorkoutModal(false)}
-      >
+    {/* Move Workout Modal */}
+    <Modal
+      visible={showMoveModal}
+      animationType="slide"
+      presentationStyle="formSheet"
+      onRequestClose={() => setShowMoveModal(false)}
+    >
+      <View style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Move Workout</Text>
+          <TouchableOpacity onPress={() => setShowMoveModal(false)}>
+            <Ionicons name="close" size={24} color="#666" />
+          </TouchableOpacity>
+        </View>
+        
+        <View style={styles.moveContent}>
+          <Text style={styles.moveLabel}>Move &ldquo;{workoutToMove?.workout_name}&rdquo; to:</Text>
+          
+          <TouchableOpacity 
+            style={styles.datePickerButton}
+            onPress={() => setShowDatePicker(true)}
+          >
+            <Ionicons name="calendar-outline" size={20} color="#155724" />
+            <Text style={styles.datePickerButtonText}>
+              {moveToDate.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })}
+            </Text>
+          </TouchableOpacity>
+          
+          <View style={styles.moveModalActions}>
+            <TouchableOpacity 
+              style={styles.cancelMoveButton}
+              onPress={() => setShowMoveModal(false)}
+              disabled={moving}
+            >
+              <Text style={styles.cancelMoveButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.confirmMoveButton, moving && styles.confirmMoveButtonDisabled]}
+              onPress={confirmMoveWorkout}
+              disabled={moving}
+            >
+              {moving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.confirmMoveButtonText}>Move Workout</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+      
+      {showDatePicker && (
+        <DateTimePicker
+          value={moveToDate}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={handleDatePickerChange}
+        />
+      )}
+    </Modal>
+
+    {/* Workout Selection Modal */}
+    <Modal
+      visible={showAddWorkoutModal}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={() => setShowAddWorkoutModal(false)}
+    >
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Select Workout</Text>
@@ -867,7 +993,7 @@ export default function CalendarPage() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </>
   );
 }
 
@@ -1399,6 +1525,77 @@ const styles = StyleSheet.create({
   },
   deleteModalConfirmButtonText: {
     color: '#fff',
+    fontWeight: '600',
+  },
+  // Move workout styles
+  workoutActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  moveWorkoutButton: {
+    padding: 8,
+    borderRadius: 6,
+    backgroundColor: '#e3f2fd',
+    marginRight: 8,
+  },
+  moveContent: {
+    padding: 20,
+  },
+  moveLabel: {
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8f9fa',
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    marginBottom: 20,
+  },
+  datePickerButtonText: {
+    fontSize: 16,
+    color: '#155724',
+    marginLeft: 8,
+    fontWeight: '500',
+  },
+  moveModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  cancelMoveButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+  },
+  cancelMoveButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  confirmMoveButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: '#155724',
+    alignItems: 'center',
+  },
+  confirmMoveButtonDisabled: {
+    opacity: 0.6,
+  },
+  confirmMoveButtonText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: '600',
   },
 });

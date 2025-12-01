@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {
@@ -34,6 +34,7 @@ interface Exercise {
   category?: string;
   exercise_order?: number;
   bodyweight?: boolean;
+  alternates?: Exercise[];
 }
 
 interface WorkoutData {
@@ -49,7 +50,7 @@ interface WorkoutData {
 
 interface SetData {
   weight: number;
-  difficulty: 'easy' | 'medium' | 'hard' | null;
+  difficulty: 1 | 2 | 3 | 4 | 5 | null;
   completed: boolean;
 }
 
@@ -76,6 +77,9 @@ const buildInitialExerciseState = (rawSets?: number | null) => {
 };
 
 const normalizeDifficulty = (value: any): SetData['difficulty'] => {
+  if (typeof value === 'number' && value >= 1 && value <= 5) {
+    return value as 1 | 2 | 3 | 4 | 5;
+  }
   if (value === 'easy' || value === 'medium' || value === 'hard') {
     return value;
   }
@@ -170,6 +174,11 @@ export default function WorkoutDetail() {
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
   const [exerciseSearchModalVisible, setExerciseSearchModalVisible] = useState(false);
   const [exerciseSearchQuery, setExerciseSearchQuery] = useState('');
+  
+  // Swap alternates state
+  const [swapModalVisible, setSwapModalVisible] = useState(false);
+  const [exerciseToSwap, setExerciseToSwap] = useState<Exercise | null>(null);
+  const [originalExercises, setOriginalExercises] = useState<{[key: number]: Exercise}>({});
 
   // Get last weights for an exercise from previous workouts
   const getLastWeightsForExercise = async (exerciseId: number, workoutId: number): Promise<number[]> => {
@@ -238,8 +247,8 @@ export default function WorkoutDetail() {
     resetWorkoutState();
     setExitWorkoutModalVisible(false);
     
-    // Navigate back
-    router.back();
+    // Navigate back to workout list
+    router.replace('/workout-list');
   };
 
   // Handle discarding existing active workout to start new one
@@ -270,7 +279,7 @@ export default function WorkoutDetail() {
         type: 'error',
         text1: 'Error',
         text2: 'Failed to discard existing workout',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     } finally {
       setDiscardingActiveWorkout(false);
@@ -502,7 +511,7 @@ export default function WorkoutDetail() {
         type: 'error',
         text1: 'Exercise Missing',
         text2: 'Unable to find this exercise in the workout.',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
       return;
     }
@@ -535,7 +544,7 @@ export default function WorkoutDetail() {
             type: 'info',
             text1: 'Exercise Unchecked',
             text2: `${exerciseRef.name} removed from completed exercises`,
-            visibilityTime: 2000,
+            visibilityTime: 1000,
           });
         }
       }
@@ -552,7 +561,7 @@ export default function WorkoutDetail() {
         type: 'error',
         text1: 'Error',
         text2: 'Failed to update exercise completion',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     }
   };
@@ -577,13 +586,9 @@ export default function WorkoutDetail() {
       const setsCompleted = activeSets.length;
       const weightPerSet = activeSets.map((set: SetData) => set.weight);
       const difficultyPerSet = activeSets.map((set: SetData) => {
-        // Convert difficulty to numeric scale (1-10)
-        switch (set.difficulty) {
-          case 'easy': return 3;
-          case 'medium': return 6;
-          case 'hard': return 9;
-          default: return null; // Return null when no difficulty is set
-        }
+        // Store difficulty as direct numeric value (1-5)
+        console.log('Saving difficulty for set:', set.difficulty);
+        return set.difficulty || null;
       });
       const repsPerSet = activeSets.map(() => exercise.base_reps || 10); // Use base reps from exercise
 
@@ -622,7 +627,7 @@ export default function WorkoutDetail() {
           type: 'error',
           text1: 'Recording Error',
           text2: 'Failed to save exercise completion',
-          visibilityTime: 2000,
+          visibilityTime: 1000,
         });
       }
     } catch (error) {
@@ -631,7 +636,7 @@ export default function WorkoutDetail() {
         type: 'error',
         text1: 'Error',
         text2: 'Failed to record exercise',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     }
   };
@@ -650,7 +655,7 @@ export default function WorkoutDetail() {
     persistWorkoutSession(updatedStates, tempExercises);
   };
 
-  const updateSetDifficulty = (setIndex: number, difficulty: 'easy' | 'medium' | 'hard') => {
+  const updateSetDifficulty = (setIndex: number, difficulty: 1 | 2 | 3 | 4 | 5) => {
     if (!selectedExercise) return;
     const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);
     const newSets = [...state.sets];
@@ -710,8 +715,14 @@ export default function WorkoutDetail() {
 
   // const saveNotes = () => {\n  //   if (!selectedExercise) return;\n  //   const state = getExerciseState(selectedExercise.id, selectedExercise.base_sets);\n  //   \n  //   const updatedState = { ...state, notes: tempNotes };\n  //   const updatedStates = {\n  //     ...exerciseStates,\n  //     [selectedExercise.id]: updatedState\n  //   };\n  //   setExerciseStates(updatedStates);\n  //   persistWorkoutSession(updatedStates, tempExercises);\n  // };
 
-  const getDifficultyColor = (difficulty: string) => {
+  const getDifficultyColor = (difficulty: number | string) => {
     switch (difficulty) {
+      case 1: return '#4CAF50';  // Easy - Green
+      case 2: return '#8BC34A';  // Light Green 
+      case 3: return '#FF9800';  // Medium - Orange
+      case 4: return '#FF5722';  // Hard - Red-Orange
+      case 5: return '#F44336';  // Very Hard - Red
+      // Legacy support
       case 'easy': return '#4CAF50';
       case 'medium': return '#FF9800';
       case 'hard': return '#F44336';
@@ -820,7 +831,7 @@ export default function WorkoutDetail() {
         type: 'error',
         text1: 'Error',
         text2: 'Failed to complete workout. Please try again.',
-        visibilityTime: 2000,
+        visibilityTime: 1000,
       });
     } finally {
       setCompletingWorkout(false);
@@ -876,7 +887,7 @@ export default function WorkoutDetail() {
       type: 'success',
       text1: 'Temp Exercise Added',
       text2: `${exercise.name} added to workout`,
-      visibilityTime: 2000,
+      visibilityTime: 1000,
     });
   };
 
@@ -903,7 +914,87 @@ export default function WorkoutDetail() {
       type: 'info',
       text1: 'Temp Exercise Removed',
       text2: `${exerciseToRemove.name} removed from workout`,
-      visibilityTime: 2000,
+      visibilityTime: 1000,
+    });
+  };
+
+  // Swap exercise with alternate
+  const handleShowSwapOptions = (exercise: Exercise) => {
+    if (exercise.alternates && exercise.alternates.length > 0) {
+      setExerciseToSwap(exercise);
+      setSwapModalVisible(true);
+    }
+  };
+
+  const handleSwapExercise = (originalExercise: Exercise, alternateExercise: Exercise) => {
+    if (!workout) return;
+    
+    // Store the original exercise for potential undo
+    setOriginalExercises(prev => ({
+      ...prev,
+      [alternateExercise.id]: originalExercise
+    }));
+    
+    // Check if this is a temp exercise
+    const isTempExercise = tempExercises.some(ex => ex.id === originalExercise.id);
+    
+    // Create new alternates list: 
+    // 1. Filter out the exercise we're swapping TO (to avoid self-reference)
+    // 2. Add the original exercise only if it's not already in the list
+    const existingAlternates = (originalExercise.alternates || []).filter(alt => alt.id !== alternateExercise.id);
+    const originalAlreadyExists = existingAlternates.some(alt => alt.id === originalExercise.id);
+    const newAlternates = originalAlreadyExists ? existingAlternates : [...existingAlternates, originalExercise];
+    
+    if (isTempExercise) {
+      // Handle temp exercise swapping
+      const updatedTempExercises = tempExercises.map(ex => 
+        ex.id === originalExercise.id 
+          ? { 
+              ...alternateExercise, 
+              alternates: newAlternates
+            }
+          : ex
+      );
+      setTempExercises(updatedTempExercises);
+    } else {
+      // Handle regular workout exercise swapping
+      const updatedExercises = workout.exercises.map(ex => 
+        ex.id === originalExercise.id 
+          ? { 
+              ...alternateExercise, 
+              alternates: newAlternates
+            }
+          : ex
+      );
+      setWorkout({ ...workout, exercises: updatedExercises });
+    }
+    
+    // Transfer exercise state from old to new exercise if it exists
+    const oldState = exerciseStates[originalExercise.id];
+    if (oldState) {
+      const newStates = { ...exerciseStates };
+      delete newStates[originalExercise.id];
+      newStates[alternateExercise.id] = oldState;
+      setExerciseStates(newStates);
+      
+      // Save updated session
+      persistWorkoutSession(newStates, isTempExercise ? 
+        tempExercises.map(ex => ex.id === originalExercise.id 
+          ? { 
+              ...alternateExercise, 
+              alternates: newAlternates
+            }
+          : ex) : tempExercises);
+    }
+    
+    setSwapModalVisible(false);
+    setExerciseToSwap(null);
+    
+    Toast.show({
+      type: 'success',
+      text1: 'Exercise Swapped',
+      text2: `${originalExercise.name} → ${alternateExercise.name} (Long press to undo)`,
+      visibilityTime: 3500,
     });
   };
 
@@ -984,9 +1075,17 @@ export default function WorkoutDetail() {
                   <View style={styles.exercisePreviewHeader}>
                     <Text style={styles.exercisePreviewNumber}>{index + 1}</Text>
                     <View style={styles.exercisePreviewInfo}>
-                      <Text style={styles.exercisePreviewName}>{exercise.name}</Text>
+                      <View style={styles.exerciseNameRow}>
+                        <Text style={styles.exercisePreviewName}>{exercise.name}</Text>
+                        {exercise.alternates && exercise.alternates.length > 0 && (
+                          <View style={styles.alternatesBadge}>
+                            <Ionicons name="swap-horizontal" size={10} color="#007AFF" />
+                            <Text style={[styles.alternatesBadgeText, { fontSize: 8 }]}>{exercise.alternates.length}</Text>
+                          </View>
+                        )}
+                      </View>
                       <Text style={styles.exercisePreviewDetails}>
-                        {getExerciseState(exercise.id, exercise.base_sets).sets.length} sets × {exercise.base_reps || 10} reps
+                        {getExerciseState(exercise.id, exercise.base_sets).sets.length} sets × {exercise.base_reps || 10} {exercise.bodyweight ? 'seconds' : 'reps'}
                       </Text>
                       {exercise.major_group && (
                         <Text style={styles.exercisePreviewGroup}>{exercise.major_group}</Text>
@@ -1019,15 +1118,34 @@ export default function WorkoutDetail() {
               key={exercise.id} 
               style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
               onPress={() => handleExerciseComplete(exercise.id)}
+              onLongPress={() => handleShowSwapOptions(exercise)}
               activeOpacity={0.7}
             >
               {/* Exercise Header */}
               <View style={styles.exerciseHeader}>
                 <View style={styles.exerciseInfo}>
-                  <Text style={[styles.exerciseName, isCompleted && styles.exerciseNameCompleted]}>{exercise.name}</Text>
+                  <View style={styles.exerciseNameRow}>
+                    <Text style={[styles.exerciseName, isCompleted && styles.exerciseNameCompleted]}>{exercise.name}</Text>
+                    {exercise.alternates && exercise.alternates.length > 0 && (
+                      <View style={styles.alternatesBadge}>
+                        <Ionicons name="swap-horizontal" size={12} color="#007AFF" />
+                        <Text style={styles.alternatesBadgeText}>{exercise.alternates.length}</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={[styles.exerciseDetails, isCompleted && styles.exerciseDetailsCompleted]}>
-                    {getExerciseState(exercise.id, exercise.base_sets).sets.length} sets × {exercise.base_reps || 10} reps
+                    {getExerciseState(exercise.id, exercise.base_sets).sets.length} sets × {exercise.base_reps || 10} {exercise.bodyweight ? 'seconds' : 'reps'}
                   </Text>
+                  {exercise.alternates && exercise.alternates.length > 0 && (
+                    <Text style={styles.alternatesInfo}>
+                      Alternates: {exercise.alternates.map(alt => alt.name).join(', ')}
+                    </Text>
+                  )}
+                  {exercise.alternates && exercise.alternates.length > 0 && (
+                    <Text style={styles.longPressHint}>
+                      Hold to swap with alternate
+                    </Text>
+                  )}
                 </View>
                 <View style={styles.exerciseActions}>
                   {!isCompleted && (
@@ -1135,7 +1253,7 @@ export default function WorkoutDetail() {
               </View>
               
               <Text style={styles.modalSubtitle}>
-                {selectedExercise?.base_sets || 3} sets × {selectedExercise?.base_reps || 10} reps
+                {selectedExercise?.base_sets || 3} sets × {selectedExercise?.base_reps || 10} {selectedExercise?.bodyweight ? 'seconds' : 'reps'}
               </Text>
 
               <ScrollView 
@@ -1162,7 +1280,7 @@ export default function WorkoutDetail() {
                           <View style={styles.setControls}>
                             {/* Weight Picker */}
                             <View style={styles.weightContainer}>
-                              <Text style={styles.controlLabel}>Weight</Text>
+                              <Text style={styles.controlLabel}>{selectedExercise?.bodyweight ? 'Seconds' : 'Weight'}</Text>
                               <View style={styles.weightPicker}>
                                 <TouchableOpacity 
                                   onPress={() => updateSetWeight(index, Math.max(5, setData.weight - 5))}
@@ -1186,25 +1304,28 @@ export default function WorkoutDetail() {
                             <View style={styles.difficultyContainer}>
                               <Text style={styles.controlLabel}>Difficulty</Text>
                               <View style={styles.difficultyButtons}>
-                                {(['easy', 'medium', 'hard'] as const).map((diff) => (
+                                {([1, 2, 3, 4, 5] as const).map((diff) => (
                                   <TouchableOpacity
                                     key={diff}
                                     style={[
                                       styles.difficultyButton,
-                                      { backgroundColor: setData.difficulty === diff ? getDifficultyColor(diff) : '#f0f0f0' }
+                                      {
+                                        backgroundColor: setData.difficulty === diff ? getDifficultyColor(diff) : '#f0f0f0',
+                                        borderColor: setData.difficulty === diff ? getDifficultyColor(diff) : '#ddd'
+                                      }
                                     ]}
                                     onPress={() => updateSetDifficulty(index, diff)}
                                     activeOpacity={0.7}
                                   >
-                                    <Ionicons 
-                                      name={
-                                        diff === 'easy' ? 'happy-outline' :
-                                        diff === 'medium' ? 'reorder-two-outline' :
-                                        'skull-outline'
+                                    <Text style={[
+                                      styles.difficultyText, 
+                                      { 
+                                        color: setData.difficulty === diff ? '#fff' : '#666',
+                                        fontWeight: setData.difficulty === diff ? 'bold' : '600'
                                       }
-                                      size={16}
-                                      color={setData.difficulty === diff ? '#fff' : '#666'}
-                                    />
+                                    ]}>
+                                      {diff}
+                                    </Text>
                                   </TouchableOpacity>
                                 ))}
                               </View>
@@ -1255,7 +1376,7 @@ export default function WorkoutDetail() {
                                 type: 'info',
                                 text1: 'Exercise Hidden',
                                 text2: `${exerciseToRemove.name} hidden for this workout session`,
-                                visibilityTime: 2000,
+                                visibilityTime: 1000,
                               });
                             }
                           }
@@ -1305,7 +1426,10 @@ export default function WorkoutDetail() {
         animationType="slide"
         onRequestClose={cancelCompleteWorkout}
       >
-        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <View style={styles.completeWorkoutModal}>
             <Text style={styles.completeWorkoutTitle}>Complete Workout</Text>
             <Text style={styles.completeWorkoutSubtitle}>
@@ -1358,7 +1482,7 @@ export default function WorkoutDetail() {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
       {/* Add Temp Exercise Modal */}
       <Modal
@@ -1496,6 +1620,89 @@ export default function WorkoutDetail() {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+      
+      {/* Swap Exercise Modal */}
+      <Modal
+        visible={swapModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setSwapModalVisible(false)}
+      >
+        <TouchableOpacity 
+          style={[styles.modalOverlay, { justifyContent: 'flex-end' }]}
+          activeOpacity={1}
+          onPress={() => setSwapModalVisible(false)}
+        >
+          <TouchableOpacity 
+            style={[styles.modalContent, { maxHeight: '50%' }]}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <SafeAreaView style={{flex: 1}}>
+              <View style={styles.modalHeaderContainer}>
+                <Text style={styles.modalTitle}>Swap Exercise</Text>
+                <TouchableOpacity 
+                  style={styles.closeButton}
+                  onPress={() => setSwapModalVisible(false)}
+                >
+                  <Ionicons name="close" size={20} color="#666" />
+                </TouchableOpacity>
+              </View>
+              
+              <Text style={styles.modalSubtitle}>
+                Swap &ldquo;{exerciseToSwap?.name}&rdquo; with an alternate
+              </Text>
+              
+              <ScrollView 
+                style={{flex: 1}}
+                contentContainerStyle={{paddingHorizontal: 20, paddingBottom: 20}}
+                showsVerticalScrollIndicator={true}
+              >
+                {exerciseToSwap?.alternates?.map((alternate, index) => (
+                  <TouchableOpacity
+                    key={`${exerciseToSwap.id}-alternate-${alternate.id}-${index}`}
+                    style={styles.swapOptionCard}
+                    onPress={() => exerciseToSwap && handleSwapExercise(exerciseToSwap, alternate)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.swapOptionHeader}>
+                      <Text style={styles.swapOptionName}>{alternate.name}</Text>
+                      <Ionicons name="arrow-forward" size={16} color="#007AFF" />
+                    </View>
+                    
+                    <Text style={styles.swapOptionDetails}>
+                      {alternate.base_sets || 3} sets × {alternate.base_reps || 10} {alternate.bodyweight ? 'seconds' : 'reps'}
+                    </Text>
+                    
+                    {alternate.description && (
+                      <Text style={styles.swapOptionDescription} numberOfLines={2}>
+                        {alternate.description}
+                      </Text>
+                    )}
+                    
+                    <View style={styles.swapOptionMuscles}>
+                      <Text style={styles.swapOptionMuscleGroup}>
+                        {alternate.major_group}
+                        {alternate.minor_group && ` • ${alternate.minor_group}`}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+                
+                {(!exerciseToSwap?.alternates || exerciseToSwap.alternates.length === 0) && (
+                  <View style={[styles.container, styles.centerContainer]}>
+                    <Ionicons name="fitness-outline" size={48} color="#ccc" />
+                    <Text style={styles.emptyText}>No alternates available</Text>
+                    <Text style={styles.modalText}>
+                      This exercise has no alternate options.
+                    </Text>
+                  </View>
+                )}
+              </ScrollView>
+            </SafeAreaView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
       </View>
     </SafeAreaView>
   );
@@ -1625,7 +1832,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
     alignItems: 'center',
-    width: '100%',
   },
   modalKeyboardView: {
     flex: 1,
@@ -1656,8 +1862,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '90%',
-    minHeight: '70%',
+    height: '80%',
     width: '100%',
     elevation: 10,
     shadowColor: '#000',
@@ -1775,9 +1980,12 @@ const styles = StyleSheet.create({
   },
   difficultyButton: {
     paddingVertical: 8,
+    paddingHorizontal: 8,
     borderRadius: 6,
     minWidth: 32,
     alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
   difficultyText: {
     fontSize: 12,
@@ -1979,10 +2187,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 24,
-    margin: 20,
     maxWidth: 400,
-    width: '90%',
-    maxHeight: '70%',
+    width: '100%',
+    maxHeight: '80%',
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -2247,5 +2454,91 @@ const styles = StyleSheet.create({
     color: '#666',
     lineHeight: 18,
     paddingLeft: 36,
+  },
+  // Alternates visual indicators
+  exerciseNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  alternatesBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e8f4f8',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  alternatesBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginLeft: 2,
+  },
+  alternatesInfo: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  longPressHint: {
+    fontSize: 10,
+    color: '#999',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  // Swap modal styles
+  swapOptionCard: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  swapOptionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  swapOptionName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
+  },
+  swapOptionDetails: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  swapOptionDescription: {
+    fontSize: 13,
+    color: '#777',
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  swapOptionMuscles: {
+    marginTop: 4,
+  },
+  swapOptionMuscleGroup: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '500',
+    textTransform: 'capitalize',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#999',
+    textAlign: 'center',
+    marginTop: 16,
+    marginBottom: 8,
   },
 });
