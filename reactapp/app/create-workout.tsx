@@ -628,7 +628,11 @@ export default function CreateWorkout() {
           </View>
 
           {/* Available Exercises */}
-          <ScrollView style={styles.exercisesList}>
+          <ScrollView 
+            style={styles.exercisesList}
+            keyboardShouldPersistTaps="always"
+            showsVerticalScrollIndicator={false}
+          >
             {filteredExercises.map(renderAvailableExercise)}
             {filteredExercises.length === 0 && (
               <View style={styles.emptyState}>
@@ -723,7 +727,11 @@ export default function CreateWorkout() {
             />
           </View>
 
-          <ScrollView style={styles.exercisesList}>
+          <ScrollView 
+            style={styles.exercisesList}
+            keyboardShouldPersistTaps="always"
+            showsVerticalScrollIndicator={false}
+          >
             {availableExercises
               .filter(exercise => {
                 // Filter out the current exercise and existing alternates

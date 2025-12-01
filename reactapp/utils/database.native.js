@@ -362,23 +362,53 @@ export const repairSystemWorkouts = async () => {
     }
 
     const defaultWorkoutExercises = {
-      'Strength Training': [
-        { name: 'Squat', order: 1 },
-        { name: 'Bench Press', order: 2 },
-        { name: 'Barbell Row', order: 3 },
-        { name: 'Overhead Press', order: 4 }
+      'Push Day (Chest, Shoulders, Triceps)': [
+        { name: 'Bench Press', order: 1 },
+        { name: 'Military Press', order: 2 },
+        { name: 'Dumbbell Fly', order: 3 },
+        { name: 'Lateral Raise', order: 4 },
+        { name: 'Tricep Pulldown', order: 5 },
+        { name: 'Close Grip Bench Press', order: 6 }
       ],
-      'Lower Body': [
+      'Pull Day (Back, Biceps, Rear Delts)': [
+        { name: 'Pullup', order: 1 },
+        { name: 'Barbell Row', order: 2 },
+        { name: 'Seated Cable Row', order: 3 },
+        { name: 'Face Pull', order: 4 },
+        { name: 'Barbell Curl', order: 5 },
+        { name: 'Hammer Curl', order: 6 }
+      ],
+      'Leg Day (Quads, Glutes, Hamstrings, Calves)': [
         { name: 'Squat', order: 1 },
         { name: 'Romanian Deadlift', order: 2 },
         { name: 'Leg Press', order: 3 },
-        { name: 'Calf Raise', order: 4 }
+        { name: 'Leg Curl', order: 4 },
+        { name: 'Bulgarian Split Squat', order: 5 },
+        { name: 'Standing Calf Raise', order: 6 }
       ],
-      'Upper Body': [
-        { name: 'Bench Press', order: 1 },
-        { name: 'Pullup', order: 2 },
-        { name: 'Overhead Press', order: 3 },
-        { name: 'Barbell Row', order: 4 }
+      'Push Day B (Incline Focus & Volume)': [
+        { name: 'Incline Dumbbell Press', order: 1 },
+        { name: 'Dumbbell Shoulder Press', order: 2 },
+        { name: 'Decline Dumbbell Press', order: 3 },
+        { name: 'Arnold Press', order: 4 },
+        { name: 'Tricep Extension', order: 5 },
+        { name: 'Weighted Dip', order: 6 }
+      ],
+      'Pull Day B (Width & Thickness Focus)': [
+        { name: 'Wide Grip Pullup', order: 1 },
+        { name: 'T-Bar Row', order: 2 },
+        { name: 'Lat Pulldown', order: 3 },
+        { name: 'Reverse Fly', order: 4 },
+        { name: 'Preacher Curl', order: 5 },
+        { name: 'Shrug', order: 6 }
+      ],
+      'Leg Day B (Posterior Chain & Power)': [
+        { name: 'Deadlift', order: 1 },
+        { name: 'Hip Thrust', order: 2 },
+        { name: 'Jump Squat', order: 3 },
+        { name: 'Walking Lunge', order: 4 },
+        { name: 'Leg Extension', order: 5 },
+        { name: 'Seated Calf Raise', order: 6 }
       ]
     };
 
